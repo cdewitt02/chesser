@@ -1,8 +1,8 @@
 package models
 
 type Player struct {
-	Username string
-	Rating int
-	Result string
-	UUID string
+	UUID string `json:"uuid"`
+	Username string `json:"username"`
+	Rating uint16 `json:"rating"`
+	Result string `json:"result"`
 }
