@@ -62,7 +62,7 @@ CREATE INDEX IF NOT EXISTS idx_moves_cpl ON moves(cpl DESC);
 CREATE TABLE IF NOT EXISTS game_summaries (
     game_uuid UUID PRIMARY KEY REFERENCES games(uuid) ON DELETE CASCADE,
     summary_text TEXT NOT NULL,
-    embedding vector(384)
+    embedding vector(768)
 );
 
 CREATE INDEX IF NOT EXISTS idx_game_summaries_embedding 

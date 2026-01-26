@@ -9,9 +9,8 @@ import (
 
 	"github.com/chesser/internal/api"
 	"github.com/chesser/internal/db"
-	"github.com/chesser/internal/engine"
+	"github.com/chesser/internal/embeddings"
 	"github.com/chesser/internal/models"
-	"github.com/chesser/internal/summary"
 )
 
 // Struct to parse the test data JSON
@@ -103,6 +102,15 @@ func aggregateStats(analyses []*models.MoveAnalysis) (white, black Stats) {
 	return white, black
 }
 
+func getNumWorkers() int {
+	if val := os.Getenv("NUM_WORKERS"); val != "" {
+		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 4 // default
+}
+
 func main() {
 	if len(os.Args) != 4 {
 		fmt.Println("Usage: go run cmd/main.go <username> <year> <month>")
@@ -111,6 +119,9 @@ func main() {
 
 	username := os.Args[1]
 	year, err := strconv.Atoi(os.Args[2])
+	if err != nil {
+		log.Fatalf("Invalid year: %v", err)
+	}
 	month := os.Args[3]
 
 	date := models.YearMonth{
@@ -122,6 +133,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to get data: %v", err)
 	}
+	fmt.Printf("📥 Fetched %d games from Chess.com\n", len(games))
 
 	database, err := db.New(context.Background(), os.Getenv("DATABASE_URL"))
 	if err != nil {
@@ -133,85 +145,36 @@ func main() {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}
 
-	dbEngine, err := engine.StartEngine()
-	if err != nil {
-		log.Fatalf("Failed to start engine: %v", err)
-	}
-
-	defer engine.StopEngine(dbEngine)
-
+	// Filter out already-analyzed games
+	var gamesToAnalyze []models.Game
 	for _, game := range games {
 		exists, err := database.GameExists(context.Background(), game.UUID)
 		if err != nil {
 			log.Fatalf("Failed to check if game exists: %v", err)
 		}
-		if exists {
-			fmt.Println("Game already analyzed")
-			continue
+		if !exists {
+			gamesToAnalyze = append(gamesToAnalyze, game)
 		}
-
-		gameAnalysis, err := engine.AnalyzeGame(dbEngine, game.PGN, ANALYSIS_DEPTH)
-		if err != nil {
-			log.Fatalf("Failed to analyze game: %v", err)
-		}
-
-		summaryData := summary.ExtractSummaryData(&game, gameAnalysis, username)
-		gameSummary := summary.GenerateSummary(summaryData)
-		fmt.Println("\n--- Game Summary ---")
-		fmt.Println(gameSummary)
-		fmt.Println("--------------------")
-
-		whiteStats, blackStats := aggregateStats(gameAnalysis)
-
-		avgCPLWhite := 0.0
-		avgCPLBlack := 0.0
-		if whiteStats.Moves > 0 {
-			avgCPLWhite = float64(whiteStats.TotalCPL) / float64(whiteStats.Moves)
-		}
-		if blackStats.Moves > 0 {
-			avgCPLBlack = float64(blackStats.TotalCPL) / float64(blackStats.Moves)
-		}
-
-		// Map models.Game + stats to db.GameRecord
-		err = database.SaveGame(context.Background(), &db.GameRecord{
-			// Direct mappings from API response
-			UUID:          game.UUID,
-			URL:           game.URL,
-			PGN:           game.PGN,
-			ECOCode:       game.ECOCode(),
-			ECOName:       game.OpeningName(),
-			WhiteUsername: game.White.Username,
-			WhiteRating:   int(game.White.Rating),
-			BlackUsername: game.Black.Username,
-			BlackRating:   int(game.Black.Rating),
-			Result:        game.GameResult(),
-			TimeControl:   game.TimeControl,
-			TimeClass:     game.TimeClass,
-			Rated:         game.Rated,
-
-			// Computed from analysis
-			AvgCPLWhite:       avgCPLWhite,
-			AvgCPLBlack:       avgCPLBlack,
-			BlundersWhite:     whiteStats.Blunders,
-			BlundersBlack:     blackStats.Blunders,
-			MistakesWhite:     whiteStats.Mistakes,
-			MistakesBlack:     blackStats.Mistakes,
-			InaccuraciesWhite: whiteStats.Inaccuracies,
-			InaccuraciesBlack: blackStats.Inaccuracies,
-			BestMovesWhite:    whiteStats.BestMoves,
-			BestMovesBlack:    blackStats.BestMoves,
-		})
-		if err != nil {
-			log.Fatalf("Failed to save game: %v", err)
-		}
-
-		moveRecords := toMoveRecords(game.UUID, gameAnalysis)
-		if err := database.SaveMoves(context.Background(), moveRecords); err != nil {
-			log.Fatalf("Failed to save moves: %v", err)
-		}
-
-		fmt.Printf("✅ Analyzed and saved: %s vs %s (%d moves)\n", game.White.Username, game.Black.Username, len(moveRecords))
-
 	}
 
+	if len(gamesToAnalyze) == 0 {
+		fmt.Println("✨ All games already analyzed!")
+		return
+	}
+
+	fmt.Printf("🔍 %d new games to analyze\n", len(gamesToAnalyze))
+
+	// Initialize embedding client (shared across workers)
+	embeddingClient := embeddings.New("http://localhost:11434", "nomic-embed-text")
+
+	// Create and run worker pool
+	numWorkers := getNumWorkers()
+	fmt.Printf("🚀 Starting %d workers...\n", numWorkers)
+
+	pool := NewWorkerPool(numWorkers, database, embeddingClient, username)
+	if err := pool.Process(context.Background(), gamesToAnalyze); err != nil {
+		log.Fatalf("Processing failed: %v", err)
+	}
+
+	fmt.Printf("🎉 Successfully analyzed %d games!\n", len(gamesToAnalyze))
 }
