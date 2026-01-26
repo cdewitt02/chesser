@@ -13,4 +13,5 @@ type MoveAnalysis struct {
     PlayedMove  *chess.Move // the move that was played
     CentipawnLoss int // the centipawn loss of the played move
     Classification string // the classification of the played move
+    FENBefore string // the FEN before the move
 }

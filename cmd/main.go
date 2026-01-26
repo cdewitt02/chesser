@@ -11,6 +11,7 @@ import (
 	"github.com/chesser/internal/db"
 	"github.com/chesser/internal/engine"
 	"github.com/chesser/internal/models"
+	"github.com/chesser/internal/summary"
 )
 
 // Struct to parse the test data JSON
@@ -27,6 +28,50 @@ type Stats struct {
 	Mistakes     int
 	Inaccuracies int
 	BestMoves    int
+}
+
+func toMoveRecords(gameUUID string, analyses []*models.MoveAnalysis) []*db.MoveRecord {
+	records := make([]*db.MoveRecord, 0, len(analyses)) // pre-allocate capacity for efficiency
+
+	for i, analysis := range analyses {
+		if analysis == nil {
+			continue
+		}
+
+		// Chess move numbering: moves 0,1 are move 1, moves 2,3 are move 2, etc.
+		moveNumber := (i / 2) + 1
+
+		side := "white"
+		if i%2 == 1 {
+			side = "black"
+		}
+
+		playedMove := ""
+		if analysis.PlayedMove != nil {
+			playedMove = analysis.PlayedMove.String()
+		}
+
+		bestMove := ""
+		if analysis.BestMove != nil {
+			bestMove = analysis.BestMove.String()
+		}
+
+		records = append(records, &db.MoveRecord{
+			GameUUID:       gameUUID,
+			MoveNumber:     moveNumber,
+			Side:           side,
+			PlayedMove:     playedMove,
+			BestMove:       bestMove,
+			FENBefore:      analysis.FENBefore,
+			Evaluation:     analysis.Evaluation,
+			IsMate:         analysis.IsMate,
+			MateIn:         analysis.MateIn,
+			CPL:            analysis.CentipawnLoss,
+			Classification: analysis.Classification,
+		})
+	}
+
+	return records
 }
 
 func aggregateStats(analyses []*models.MoveAnalysis) (white, black Stats) {
@@ -110,6 +155,12 @@ func main() {
 			log.Fatalf("Failed to analyze game: %v", err)
 		}
 
+		summaryData := summary.ExtractSummaryData(&game, gameAnalysis, username)
+		gameSummary := summary.GenerateSummary(summaryData)
+		fmt.Println("\n--- Game Summary ---")
+		fmt.Println(gameSummary)
+		fmt.Println("--------------------")
+
 		whiteStats, blackStats := aggregateStats(gameAnalysis)
 
 		avgCPLWhite := 0.0
@@ -154,7 +205,12 @@ func main() {
 			log.Fatalf("Failed to save game: %v", err)
 		}
 
-		fmt.Printf("✅ Analyzed and saved: %s vs %s\n", game.White.Username, game.Black.Username)
+		moveRecords := toMoveRecords(game.UUID, gameAnalysis)
+		if err := database.SaveMoves(context.Background(), moveRecords); err != nil {
+			log.Fatalf("Failed to save moves: %v", err)
+		}
+
+		fmt.Printf("✅ Analyzed and saved: %s vs %s (%d moves)\n", game.White.Username, game.Black.Username, len(moveRecords))
 
 	}
 

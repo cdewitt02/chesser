@@ -26,16 +26,6 @@ type Game struct {
 	Black        Player             `json:"black"`
 }
 
-func (g *Game) Winner() string {
-	if g.White.Result == "win" {
-		return g.White.Username
-	} else if g.Black.Result == "win" {
-		return g.Black.Username
-	} else {
-		return ""
-	}
-}
-
 func (g *Game) GameResult() string {
 	if g.White.Result == "win" {
 		return "white"

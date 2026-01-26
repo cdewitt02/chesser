@@ -157,6 +157,7 @@ func AnalyzeGame(engine *uci.Engine, pgnString string, depth int) ([]*models.Mov
 			PlayedMove:     playedMove,
 			CentipawnLoss:  cpl,
 			Classification: classification,
+			FENBefore:      gamePositions[i].String(),
 		}
 	}
 
