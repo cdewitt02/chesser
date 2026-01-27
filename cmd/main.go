@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/chesser/internal/api"
 	"github.com/chesser/internal/db"
@@ -171,10 +172,16 @@ func main() {
 	numWorkers := getNumWorkers()
 	fmt.Printf("🚀 Starting %d workers...\n", numWorkers)
 
+	start := time.Now()
+
 	pool := NewWorkerPool(numWorkers, database, embeddingClient, username)
 	if err := pool.Process(context.Background(), gamesToAnalyze); err != nil {
 		log.Fatalf("Processing failed: %v", err)
 	}
 
-	fmt.Printf("🎉 Successfully analyzed %d games!\n", len(gamesToAnalyze))
+	elapsed := time.Since(start)
+	gamesPerSecond := float64(len(gamesToAnalyze)) / elapsed.Seconds()
+
+	fmt.Printf("🎉 Successfully analyzed %d games in %s (%.2f games/sec)\n",
+		len(gamesToAnalyze), elapsed.Round(time.Millisecond), gamesPerSecond)
 }
