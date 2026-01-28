@@ -4,8 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/chesser/internal/search"
 	"github.com/pgvector/pgvector-go"
 )
+
+// alias
+type GameFilters = search.GameFilters
 
 type GameSummary struct {
 	GameUUID    string
@@ -55,7 +59,7 @@ func (db *DB) GetGameSummary(ctx context.Context, gameUUID string) (*GameSummary
 
 func (db *DB) FindSimilarGames(ctx context.Context, queryEmbedding []float32, limit int) ([]*SimilarGameResult, error) {
 	query := `
-		SELECT gs.game_uuid, gs.summary_text, gs.embedding <-> $1 AS distance
+		SELECT gs.game_uuid, gs.summary_text, gs.embedding <=> $1 AS distance
 		FROM game_summaries gs
 		ORDER BY distance
 		LIMIT $2
@@ -88,7 +92,7 @@ func (db *DB) FindSimilarGamesWithFilter(
 	limit int,
 ) ([]*SimilarGameResult, error) {
 	query := `
-		SELECT gs.game_uuid, gs.summary_text, gs.embedding <-> $1 AS distance,
+		SELECT gs.game_uuid, gs.summary_text, gs.embedding <=> $1 AS distance,
 			   g.uuid, g.url, g.pgn, g.eco_code, g.eco_name,
 			   g.white_username, g.white_rating, g.black_username, g.black_rating,
 			   g.result, g.time_control, g.time_class, g.rated,
@@ -139,6 +143,100 @@ func (db *DB) FindSimilarGamesWithFilter(
 		results = append(results, &r)
 	}
 	return results, nil
+}
+
+// builds dynamic WHERE clauses from the filters and combines with vector similarity search.
+func (db *DB) FindSimilarGamesWithFilters(
+	ctx context.Context,
+	queryEmbedding []float32,
+	filters *GameFilters,
+	limit int,
+) ([]*SimilarGameResult, error) {
+	baseQuery := `
+		SELECT gs.game_uuid, gs.summary_text, gs.embedding <=> $1 AS distance,
+			   g.uuid, g.url, g.pgn, g.eco_code, g.eco_name,
+			   g.white_username, g.white_rating, g.black_username, g.black_rating,
+			   g.result, g.time_control, g.time_class, g.rated,
+			   g.avg_cpl_white, g.avg_cpl_black,
+			   g.blunders_white, g.blunders_black,
+			   g.mistakes_white, g.mistakes_black,
+			   g.inaccuracies_white, g.inaccuracies_black,
+			   g.best_moves_white, g.best_moves_black,
+			   g.created_at
+		FROM game_summaries gs
+		JOIN games g ON gs.game_uuid = g.uuid
+	`
+
+	whereResult := filters.BuildWHERE(2)
+
+	var query string
+	args := []any{pgvector.NewVector(queryEmbedding)}
+	args = append(args, whereResult.Args...)
+
+	if whereResult.Clause != "" {
+		query = baseQuery + " WHERE " + whereResult.Clause
+	} else {
+		query = baseQuery
+	}
+
+	// Add ordering and limit
+	query += " ORDER BY distance LIMIT $" + fmt.Sprintf("%d", len(args)+1)
+	args = append(args, limit)
+
+	rows, err := db.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query similar games with filters: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*SimilarGameResult
+	for rows.Next() {
+		var r SimilarGameResult
+		var game GameRecord
+		var createdAt any 
+		err := rows.Scan(
+			&r.GameUUID, &r.SummaryText, &r.Distance,
+			&game.UUID, &game.URL, &game.PGN, &game.ECOCode, &game.ECOName,
+			&game.WhiteUsername, &game.WhiteRating, &game.BlackUsername, &game.BlackRating,
+			&game.Result, &game.TimeControl, &game.TimeClass, &game.Rated,
+			&game.AvgCPLWhite, &game.AvgCPLBlack,
+			&game.BlundersWhite, &game.BlundersBlack,
+			&game.MistakesWhite, &game.MistakesBlack,
+			&game.InaccuraciesWhite, &game.InaccuraciesBlack,
+			&game.BestMovesWhite, &game.BestMovesBlack,
+			&createdAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan similar game with filters: %w", err)
+		}
+		r.Game = &game
+		results = append(results, &r)
+	}
+	return results, nil
+}
+
+// determining if filters are too restrictive before running vector search.
+func (db *DB) CountGamesMatchingFilters(ctx context.Context, filters *GameFilters) (int, error) {
+	baseQuery := `SELECT COUNT(*) FROM games g`
+
+	whereResult := filters.BuildWHERE(1)
+
+	var query string
+	var args []any
+
+	if whereResult.Clause != "" {
+		query = baseQuery + " WHERE " + whereResult.Clause
+		args = whereResult.Args
+	} else {
+		query = baseQuery
+	}
+
+	var count int
+	err := db.pool.QueryRow(ctx, query, args...).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count games matching filters: %w", err)
+	}
+	return count, nil
 }
 
 func (db *DB) CountGamesWithSummaries(ctx context.Context) (int, error) {

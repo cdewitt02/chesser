@@ -169,7 +169,7 @@ func (wp *WorkerPool) Process(ctx context.Context, games []models.Game) error {
 				}
 
 				done := completed.Add(1)
-				fmt.Printf("✅ [%d/%d] Worker %d: %s vs %s\n",
+				fmt.Printf("[%d/%d] Worker %d: %s vs %s\n",
 					done, totalGames, workerID,
 					game.White.Username, game.Black.Username)
 			}

@@ -134,7 +134,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to get data: %v", err)
 	}
-	fmt.Printf("📥 Fetched %d games from Chess.com\n", len(games))
+	fmt.Printf("Fetched %d games from Chess.com\n", len(games))
 
 	database, err := db.New(context.Background(), os.Getenv("DATABASE_URL"))
 	if err != nil {
@@ -159,18 +159,18 @@ func main() {
 	}
 
 	if len(gamesToAnalyze) == 0 {
-		fmt.Println("✨ All games already analyzed!")
+		fmt.Println("All games already analyzed!")
 		return
 	}
 
-	fmt.Printf("🔍 %d new games to analyze\n", len(gamesToAnalyze))
+	fmt.Printf("%d new games to analyze\n", len(gamesToAnalyze))
 
 	// Initialize embedding client (shared across workers)
 	embeddingClient := embeddings.New("http://localhost:11434", "nomic-embed-text")
 
 	// Create and run worker pool
 	numWorkers := getNumWorkers()
-	fmt.Printf("🚀 Starting %d workers...\n", numWorkers)
+	fmt.Printf("Starting %d workers...\n", numWorkers)
 
 	start := time.Now()
 
@@ -182,6 +182,6 @@ func main() {
 	elapsed := time.Since(start)
 	gamesPerSecond := float64(len(gamesToAnalyze)) / elapsed.Seconds()
 
-	fmt.Printf("🎉 Successfully analyzed %d games in %s (%.2f games/sec)\n",
+	fmt.Printf("Successfully analyzed %d games in %s (%.2f games/sec)\n",
 		len(gamesToAnalyze), elapsed.Round(time.Millisecond), gamesPerSecond)
 }
