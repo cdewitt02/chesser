@@ -37,8 +37,8 @@ export DATABASE_URL="postgres://user:pass@localhost:5432/chesser"
 ```bash
 go run cmd/data/main.go <username> <year> <month>
 
-# Example: analyze January 2024 games
-go run cmd/data/main.go magnus 2024 01
+# Example: analyze January 2026 games
+go run cmd/data/main.go magnus 2026 01
 ```
 
 ### 5. Chat with your games
@@ -57,7 +57,7 @@ go run cmd/chat/main.go magnus llama3.2
 | `DATABASE_URL` | PostgreSQL connection string | *required* |
 | `OLLAMA_URL` | Ollama server URL | `http://localhost:11434` |
 | `OLLAMA_EMBED_MODEL` | Embedding model | `nomic-embed-text` |
-| `NUM_WORKERS` | Parallel analysis workers | `4` |
+| `NUM_WORKERS` | Parallel analysis workers | `8 (4 for less compute)` |
 
 ## Project Structure
 
