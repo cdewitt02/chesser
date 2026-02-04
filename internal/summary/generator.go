@@ -17,15 +17,10 @@ const (
 	LosingThreshold  = -200
 )
 
-// getPlayerEval converts Stockfish's evaluation to the player's perspective.
-// Stockfish always evaluates from White's perspective (+ve = good for White).
-// This function flips the sign for Black so +ve always means good for the player.
-// It also handles mate scores appropriately.
+// converts Stockfish's evaluation to the player's perspective.
 func getPlayerEval(move *models.MoveAnalysis, playerColor string) int {
 	var eval int
 	if move.IsMate {
-		// Mate scores: positive MateIn means the side to move can deliver mate
-		// The evaluation stored is from the position before the move
 		if move.MateIn > 0 {
 			eval = 10000 - move.MateIn
 		} else {
@@ -35,7 +30,6 @@ func getPlayerEval(move *models.MoveAnalysis, playerColor string) int {
 		eval = move.Evaluation
 	}
 
-	// Convert to player's perspective (flip sign for Black)
 	if playerColor == "black" {
 		eval = -eval
 	}
@@ -55,11 +49,6 @@ func ExtractSummaryData(
 		playerColor = "black"
 	}
 
-	// 2. Determine result from player's perspective
-	//    If playerColor == game.GameResult() → "Won"
-	//    If game.GameResult() == "draw" → "Drew"
-	//    Else → "Lost"
-
 	winner := game.GameResult()
 	var result string
 	if winner == playerColor {
@@ -70,13 +59,12 @@ func ExtractSummaryData(
 		result = "lost"
 	}
 
-	// 3. Loop through moves, for each move:
-	//    a. Determine which phase (based on move index)
-	//    b. If it's the player's move (white=even indices, black=odd)
-	//       - Add to appropriate PhaseStats
-	//    c. Track eval throughout for pattern detection
-	//       - Was player ever winning? Ever losing?
-	//       - What was biggest swing against them?
+	var opponentRating int
+	if playerColor == "white" {
+		opponentRating = int(game.Black.Rating)
+	} else {
+		opponentRating = int(game.White.Rating)
+	}
 
 	var openingStats models.PhaseStats
 	var middlegameStats models.PhaseStats
@@ -147,7 +135,9 @@ func ExtractSummaryData(
 	gameSummaryData.BiggestSwingMove = biggestSwingMove
 	gameSummaryData.WasWinning = wasWinning
 	gameSummaryData.WasLosing = wasLosing
-
+	gameSummaryData.TerminationType = game.TerminationType()
+	gameSummaryData.OpponentRating = opponentRating
+	
 	return &gameSummaryData
 }
 
@@ -162,6 +152,8 @@ func GenerateSummary(data *models.GameSummaryData) string {
 	summary += fmt.Sprintf("%s.\n", weakestPhase(data.Opening, data.Middlegame, data.Endgame))
 	summary += fmt.Sprintf("%s.\n", detectPattern(data))
 	summary += fmt.Sprintf("Game length: %s.\n", classifyGameLength(data.TotalMoves))
+	summary += fmt.Sprintf("Termination type: %s.\n", data.TerminationType)
+	summary += fmt.Sprintf("Opponent rating: %d.\n", data.OpponentRating)
 
 	return summary
 }

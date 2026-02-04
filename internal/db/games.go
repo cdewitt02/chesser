@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -18,6 +19,7 @@ type GameRecord struct {
 	BlackUsername     string
 	BlackRating       int
 	Result            string // "white", "black", "draw"
+	TerminationType   string // "checkmate", "resignation", "timeout", etc.
 	TimeControl       string
 	TimeClass         string
 	Rated             bool
@@ -31,6 +33,7 @@ type GameRecord struct {
 	InaccuraciesBlack int
 	BestMovesWhite    int
 	BestMovesBlack    int
+	PlayedAt          time.Time
 }
 
 func (db *DB) SaveGame(ctx context.Context, game *GameRecord) error {
@@ -38,21 +41,21 @@ func (db *DB) SaveGame(ctx context.Context, game *GameRecord) error {
 		INSERT INTO games (
 			uuid, url, pgn, eco_code, eco_name,
 			white_username, white_rating, black_username, black_rating,
-			result, time_control, time_class, rated,
+			result, termination_type, time_control, time_class, rated,
 			avg_cpl_white, avg_cpl_black,
 			blunders_white, blunders_black,
 			mistakes_white, mistakes_black,
 			inaccuracies_white, inaccuracies_black,
-			best_moves_white, best_moves_black
+			best_moves_white, best_moves_black, played_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9,
-			$10, $11, $12, $13,
-			$14, $15,
-			$16, $17,
-			$18, $19,
-			$20, $21,
-			$22, $23
+			$10, $11, $12, $13, $14,
+			$15, $16,
+			$17, $18,
+			$19, $20,
+			$21, $22,
+			$23, $24, $25
 		)
 		ON CONFLICT (uuid) DO UPDATE SET
 			pgn = EXCLUDED.pgn,
@@ -65,18 +68,20 @@ func (db *DB) SaveGame(ctx context.Context, game *GameRecord) error {
 			inaccuracies_white = EXCLUDED.inaccuracies_white,
 			inaccuracies_black = EXCLUDED.inaccuracies_black,
 			best_moves_white = EXCLUDED.best_moves_white,
-			best_moves_black = EXCLUDED.best_moves_black
+			best_moves_black = EXCLUDED.best_moves_black,
+			termination_type = EXCLUDED.termination_type,
+			played_at = EXCLUDED.played_at
 	`
 
 	_, err := db.pool.Exec(ctx, query,
 		game.UUID, game.URL, game.PGN, game.ECOCode, game.ECOName,
 		game.WhiteUsername, game.WhiteRating, game.BlackUsername, game.BlackRating,
-		game.Result, game.TimeControl, game.TimeClass, game.Rated,
+		game.Result, game.TerminationType, game.TimeControl, game.TimeClass, game.Rated,
 		game.AvgCPLWhite, game.AvgCPLBlack,
 		game.BlundersWhite, game.BlundersBlack,
 		game.MistakesWhite, game.MistakesBlack,
 		game.InaccuraciesWhite, game.InaccuraciesBlack,
-		game.BestMovesWhite, game.BestMovesBlack,
+		game.BestMovesWhite, game.BestMovesBlack, game.PlayedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to save game: %w", err)
@@ -88,7 +93,7 @@ func (db *DB) GetGame(ctx context.Context, uuid string) (*GameRecord, error) {
 	query := `
 		SELECT uuid, url, pgn, eco_code, eco_name,
 			   white_username, white_rating, black_username, black_rating,
-			   result, time_control, time_class, rated,
+			   result, termination_type, time_control, time_class, rated,
 			   avg_cpl_white, avg_cpl_black,
 			   blunders_white, blunders_black,
 			   mistakes_white, mistakes_black,
@@ -102,7 +107,7 @@ func (db *DB) GetGame(ctx context.Context, uuid string) (*GameRecord, error) {
 	err := db.pool.QueryRow(ctx, query, uuid).Scan(
 		&game.UUID, &game.URL, &game.PGN, &game.ECOCode, &game.ECOName,
 		&game.WhiteUsername, &game.WhiteRating, &game.BlackUsername, &game.BlackRating,
-		&game.Result, &game.TimeControl, &game.TimeClass, &game.Rated,
+		&game.Result, &game.TerminationType, &game.TimeControl, &game.TimeClass, &game.Rated,
 		&game.AvgCPLWhite, &game.AvgCPLBlack,
 		&game.BlundersWhite, &game.BlundersBlack,
 		&game.MistakesWhite, &game.MistakesBlack,
@@ -131,7 +136,7 @@ func (db *DB) GetGamesByECO(ctx context.Context, ecoPrefix string, limit int) ([
 	query := `
 		SELECT uuid, url, pgn, eco_code, eco_name,
 			   white_username, white_rating, black_username, black_rating,
-			   result, time_control, time_class, rated,
+			   result, termination_type, time_control, time_class, rated,
 			   avg_cpl_white, avg_cpl_black,
 			   blunders_white, blunders_black,
 			   mistakes_white, mistakes_black,
@@ -155,7 +160,7 @@ func (db *DB) GetGamesByECO(ctx context.Context, ecoPrefix string, limit int) ([
 		err := rows.Scan(
 			&game.UUID, &game.URL, &game.PGN, &game.ECOCode, &game.ECOName,
 			&game.WhiteUsername, &game.WhiteRating, &game.BlackUsername, &game.BlackRating,
-			&game.Result, &game.TimeControl, &game.TimeClass, &game.Rated,
+			&game.Result, &game.TerminationType, &game.TimeControl, &game.TimeClass, &game.Rated,
 			&game.AvgCPLWhite, &game.AvgCPLBlack,
 			&game.BlundersWhite, &game.BlundersBlack,
 			&game.MistakesWhite, &game.MistakesBlack,
@@ -174,7 +179,7 @@ func (db *DB) GetGamesByPlayer(ctx context.Context, username string, limit int) 
 	query := `
 		SELECT uuid, url, pgn, eco_code, eco_name,
 			   white_username, white_rating, black_username, black_rating,
-			   result, time_control, time_class, rated,
+			   result, termination_type, time_control, time_class, rated,
 			   avg_cpl_white, avg_cpl_black,
 			   blunders_white, blunders_black,
 			   mistakes_white, mistakes_black,
@@ -198,7 +203,7 @@ func (db *DB) GetGamesByPlayer(ctx context.Context, username string, limit int) 
 		err := rows.Scan(
 			&game.UUID, &game.URL, &game.PGN, &game.ECOCode, &game.ECOName,
 			&game.WhiteUsername, &game.WhiteRating, &game.BlackUsername, &game.BlackRating,
-			&game.Result, &game.TimeControl, &game.TimeClass, &game.Rated,
+			&game.Result, &game.TerminationType, &game.TimeControl, &game.TimeClass, &game.Rated,
 			&game.AvgCPLWhite, &game.AvgCPLBlack,
 			&game.BlundersWhite, &game.BlundersBlack,
 			&game.MistakesWhite, &game.MistakesBlack,

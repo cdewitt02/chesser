@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/chesser/internal/db"
 	"github.com/chesser/internal/embeddings"
@@ -47,6 +48,9 @@ func (w *Worker) ProcessGame(ctx context.Context, game models.Game) error {
 		avgCPLBlack = float64(blackStats.TotalCPL) / float64(blackStats.Moves)
 	}
 
+	// Convert Unix timestamp to time.Time
+	playedAt := time.Unix(game.EndTime, 0)
+
 	err = w.db.SaveGame(ctx, &db.GameRecord{
 		UUID:              game.UUID,
 		URL:               game.URL,
@@ -58,6 +62,7 @@ func (w *Worker) ProcessGame(ctx context.Context, game models.Game) error {
 		BlackUsername:     game.Black.Username,
 		BlackRating:       int(game.Black.Rating),
 		Result:            game.GameResult(),
+		TerminationType:   game.TerminationType(),
 		TimeControl:       game.TimeControl,
 		TimeClass:         game.TimeClass,
 		Rated:             game.Rated,
@@ -71,6 +76,7 @@ func (w *Worker) ProcessGame(ctx context.Context, game models.Game) error {
 		InaccuraciesBlack: blackStats.Inaccuracies,
 		BestMovesWhite:    whiteStats.BestMoves,
 		BestMovesBlack:    blackStats.BestMoves,
+		PlayedAt:          playedAt,
 	})
 	if err != nil {
 		return fmt.Errorf("save game failed: %w", err)

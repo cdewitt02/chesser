@@ -96,7 +96,8 @@ func main() {
 	fmt.Printf("Analyzing games for: %s\n", username)
 	fmt.Printf("Using model: %s\n", chatModel)
 	fmt.Println()
-	fmt.Println("Ask questions about your chess games. Type 'exit' or 'quit' to leave.")
+	fmt.Println("Ask questions about your chess games.")
+	fmt.Println("Commands: /clear (reset conversation), exit/quit (leave)")
 	fmt.Println()
 
 	// Start REPL loop
@@ -116,6 +117,11 @@ func main() {
 		if input == "exit" || input == "quit" {
 			fmt.Println("Goodbye!")
 			break
+		}
+		if input == "/clear" {
+			chatService.ClearHistory()
+			fmt.Println("Conversation cleared.")
+			continue
 		}
 
 		fmt.Println("Thinking...")

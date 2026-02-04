@@ -9,23 +9,26 @@ import (
 	"github.com/chesser/internal/search"
 )
 
-//orchestrates the RAG (Retrieval Augmented Generation) pipeline
 type Service struct {
 	db             *db.DB
 	ollama         *embeddings.Client
-	chatModel      string 
-	username       string 
-	numSimilar     int    
+	chatModel      string
+	username       string
+	numSimilar     int
 	promptBuilder  *PromptBuilder
 	hybridSearcher *search.HybridSearcher
+	queryRouter    *QueryRouter
 	detailLimit    int
+	history        []embeddings.ChatMessage
+	maxHistoryPairs int
 }
 
 type Config struct {
-	ChatModel  string
-	Username   string
-	NumSimilar int
-	DetailLimit int
+	ChatModel       string
+	Username        string
+	NumSimilar      int
+	DetailLimit     int
+	MaxHistoryPairs int
 }
 
 func NewService(database *db.DB, ollamaClient *embeddings.Client, cfg Config) *Service {
@@ -34,71 +37,95 @@ func NewService(database *db.DB, ollamaClient *embeddings.Client, cfg Config) *S
 		numSimilar = 5
 	}
 
+	detailLimit := cfg.DetailLimit
+	if detailLimit <= 0 {
+		detailLimit = 5
+	}
+
+	maxHistoryPairs := cfg.MaxHistoryPairs
+	if maxHistoryPairs <= 0 {
+		maxHistoryPairs = 4
+	}
+
 	dbAdapter := &dbSearchAdapter{db: database}
 	hybridSearcher := search.NewHybridSearcher(ollamaClient, dbAdapter)
+	promptBuilder := NewPromptBuilder(cfg.Username)
+	queryRouter := NewQueryRouter(database, hybridSearcher, promptBuilder, cfg.Username, numSimilar)
 
 	return &Service{
-		db:             database,
-		ollama:         ollamaClient,
-		chatModel:      cfg.ChatModel,
-		username:       cfg.Username,
-		numSimilar:     numSimilar,
-		promptBuilder:  NewPromptBuilder(cfg.Username),
-		hybridSearcher: hybridSearcher,
+		db:              database,
+		ollama:          ollamaClient,
+		chatModel:       cfg.ChatModel,
+		username:        cfg.Username,
+		numSimilar:      numSimilar,
+		promptBuilder:   promptBuilder,
+		hybridSearcher:  hybridSearcher,
+		queryRouter:     queryRouter,
+		detailLimit:     detailLimit,
+		history:         make([]embeddings.ChatMessage, 0),
+		maxHistoryPairs: maxHistoryPairs,
 	}
 }
 
-// main RAG pipeline with hybrid search
+// processes a question using query classification and routing.
+// Different query types get different context:
+// - Aggregate/Comparative: Focus on pre-computed stats
+// - SpecificGames: Focus on RAG search results
+// - Recommendation: Combine stats + relevant examples
 func (s *Service) Ask(ctx context.Context, question string) (string, error) {
-	searchResult, err := s.hybridSearcher.Search(
-		ctx,
-		search.SearchQuery{
-			Query: question,
-			TopK:  s.numSimilar,
-		},
-		s.username,
-	)
+	qctx, err := s.queryRouter.Route(ctx, question)
 	if err != nil {
-		return "", fmt.Errorf("failed to search games: %w", err)
+		return "", fmt.Errorf("failed to route query: %w", err)
 	}
 
-	if len(searchResult.Games) == 0 {
+	hasStats := qctx.PlayerStats != nil && qctx.PlayerStats.TotalGames > 0
+	hasGames := len(qctx.Games) > 0
+
+	if !hasStats && !hasGames {
 		return "I don't have any game data to analyze. Make sure you've imported and analyzed some games first.", nil
 	}
 
-	dbResults := make([]*db.SimilarGameResult, len(searchResult.Games))
-	for i, g := range searchResult.Games {
-		dbResults[i] = &db.SimilarGameResult{
-			GameUUID:    g.GameUUID,
-			SummaryText: g.SummaryText,
-			Distance:    g.Distance,
-			Game:        g.Game.(*db.GameRecord),
-		}
+	systemPrompt := s.queryRouter.BuildPrompt(qctx, s.detailLimit)
+
+	if len(qctx.Filters) > 0 {
+		systemPrompt += fmt.Sprintf("\n\nNote: The search was filtered by: %v", qctx.Filters)
 	}
-
-	systemPrompt := s.promptBuilder.BuildSystemPrompt(dbResults, s.detailLimit)
-
-	if len(searchResult.ExtractedFilters) > 0 {
-		systemPrompt += fmt.Sprintf("\n\nNote: The search was filtered by: %v", searchResult.ExtractedFilters)
-	}
-
-	wrappedQuestion := s.promptBuilder.WrapUserQuestion(question)
 
 	messages := []embeddings.ChatMessage{
 		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: wrappedQuestion},
 	}
+	messages = append(messages, s.history...)
+	messages = append(messages, embeddings.ChatMessage{Role: "user", Content: question})
 
 	response, err := s.ollama.Chat(s.chatModel, messages)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate response: %w", err)
 	}
-	// Temporary debug - see what's in the prompt
+
+	s.history = append(s.history,
+		embeddings.ChatMessage{Role: "user", Content: question},
+		embeddings.ChatMessage{Role: "assistant", Content: response},
+	)
+	s.truncateHistory()
+
+	fmt.Printf("=== QUERY TYPE: %s ===\n", qctx.QueryType)
 	fmt.Println("=== SYSTEM PROMPT ===")
 	fmt.Println(systemPrompt)
 	fmt.Println("=== END PROMPT ===")
-		return response, nil
+
+	return response, nil
+}
+
+func (s *Service) truncateHistory() {
+	maxMessages := s.maxHistoryPairs * 2
+	if len(s.history) > maxMessages {
+		s.history = s.history[len(s.history)-maxMessages:]
 	}
+}
+
+func (s *Service) ClearHistory() {
+	s.history = s.history[:0]
+}
 
 type AskResponse struct {
 	Response         string

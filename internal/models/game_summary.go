@@ -25,4 +25,7 @@ type GameSummaryData struct {
     BiggestSwingMove int    // which move number
     WasWinning       bool   // did player have winning position at some point?
     WasLosing        bool   // did player have losing position at some point?
+
+    TerminationType string // "resign", "timeout", "checkmate", "draw", "other"
+    OpponentRating  int
 }

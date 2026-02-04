@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS games (
     black_username TEXT NOT NULL,
     black_rating INT,
     result VARCHAR(10),
-    time_control VARCHAR(20),
+    termination_type VARCHAR(50),
+    time_control VARCHAR(50),
     time_class VARCHAR(20),
     rated BOOLEAN DEFAULT true,
     avg_cpl_white REAL DEFAULT 0,
@@ -32,12 +33,14 @@ CREATE TABLE IF NOT EXISTS games (
     inaccuracies_black INT DEFAULT 0,
     best_moves_white INT DEFAULT 0,
     best_moves_black INT DEFAULT 0,
+    played_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_games_eco_code ON games(eco_code);
 CREATE INDEX IF NOT EXISTS idx_games_white_username ON games(white_username);
 CREATE INDEX IF NOT EXISTS idx_games_black_username ON games(black_username);
+CREATE INDEX IF NOT EXISTS idx_games_played_at ON games(played_at DESC);
 CREATE INDEX IF NOT EXISTS idx_games_created_at ON games(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS moves (
@@ -68,6 +71,28 @@ CREATE TABLE IF NOT EXISTS game_summaries (
 CREATE INDEX IF NOT EXISTS idx_game_summaries_embedding 
 ON game_summaries USING ivfflat (embedding vector_cosine_ops)
 WITH (lists = 100);
+
+CREATE TABLE IF NOT EXISTS player_stats (
+    username TEXT PRIMARY KEY,
+    total_games INTEGER DEFAULT 0,
+    wins INTEGER DEFAULT 0,
+    losses INTEGER DEFAULT 0,
+    draws INTEGER DEFAULT 0,
+    avg_cpl REAL DEFAULT 0,
+    
+    -- Dimensional stats stored as JSON
+    stats_by_color TEXT,        -- JSON: {"white": {...}, "black": {...}}
+    stats_by_time_class TEXT,   -- JSON: {"bullet": {...}, "blitz": {...}, ...}
+    stats_by_opening TEXT,      -- JSON: {"B20": {...}, "C50": {...}, ...}
+    stats_by_rating_band TEXT,  -- JSON: {"<1000": {...}, "1000-1200": {...}, ...}
+    stats_by_termination TEXT,  -- JSON: {"checkmate": 10, "resignation": 20, ...}
+    
+    -- Period-based stats for trend analysis
+    last_30_days TEXT,          -- JSON: PeriodStats
+    last_90_days TEXT,          -- JSON: PeriodStats
+    
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 `
 
 func (db *DB) Migrate(ctx context.Context) error {

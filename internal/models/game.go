@@ -71,3 +71,8 @@ func (g *Game) OpeningName() string {
 
 	return name
 }
+
+
+func (g *Game) TerminationType() string {
+	return g.pgnHeader("Termination")
+}

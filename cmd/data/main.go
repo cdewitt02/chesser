@@ -113,17 +113,99 @@ func getNumWorkers() int {
 }
 
 func main() {
-	if len(os.Args) != 4 {
-		fmt.Println("Usage: go run cmd/main.go <username> <year> <month>")
+	if len(os.Args) < 2 {
+		printUsage()
 		os.Exit(1)
 	}
 
-	username := os.Args[1]
-	year, err := strconv.Atoi(os.Args[2])
+	command := os.Args[1]
+
+	switch command {
+	case "analyze":
+		runAnalyze()
+	case "refresh-stats":
+		runRefreshStats()
+	default:
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func printUsage() {
+	fmt.Println("Usage:")
+	fmt.Println("  go run ./cmd/data analyze <username> <year> <month>  - Analyze games from Chess.com")
+	fmt.Println("  go run ./cmd/data refresh-stats <username>           - Refresh aggregate stats for a player")
+}
+
+func runRefreshStats() {
+	if len(os.Args) != 3 {
+		fmt.Println("Usage: go run ./cmd/data refresh-stats <username>")
+		os.Exit(1)
+	}
+
+	username := os.Args[2]
+
+	database, err := db.New(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Fatalf("Failed to create database: %v", err)
+	}
+	defer database.Close()
+
+	if err := database.Migrate(context.Background()); err != nil {
+		log.Fatalf("Failed to migrate database: %v", err)
+	}
+
+	fmt.Printf("Refreshing stats for %s...\n", username)
+	start := time.Now()
+
+	stats, err := database.RefreshPlayerStats(context.Background(), username)
+	if err != nil {
+		log.Fatalf("Failed to refresh stats: %v", err)
+	}
+
+	elapsed := time.Since(start)
+	fmt.Printf("Stats refreshed in %s\n", elapsed.Round(time.Millisecond))
+	fmt.Printf("\nPlayer: %s\n", stats.Username)
+	fmt.Printf("Total Games: %d (W: %d, L: %d, D: %d)\n", 
+		stats.TotalGames, stats.Wins, stats.Losses, stats.Draws)
+	fmt.Printf("Average CPL: %.1f\n", stats.AvgCPL)
+	
+	if len(stats.StatsByColor) > 0 {
+		fmt.Println("\nBy Color:")
+		for color, s := range stats.StatsByColor {
+			fmt.Printf("  %s: %d games, %.1f%% win rate, %.1f avg CPL\n", 
+				color, s.Games, s.WinRate, s.AvgCPL)
+		}
+	}
+
+	if len(stats.StatsByTimeClass) > 0 {
+		fmt.Println("\nBy Time Class:")
+		for tc, s := range stats.StatsByTimeClass {
+			fmt.Printf("  %s: %d games, %.1f%% win rate, %.1f avg CPL\n", 
+				tc, s.Games, s.WinRate, s.AvgCPL)
+		}
+	}
+
+	if len(stats.StatsByTermination) > 0 {
+		fmt.Println("\nBy Termination:")
+		for term, count := range stats.StatsByTermination {
+			fmt.Printf("  %s: %d\n", term, count)
+		}
+	}
+}
+
+func runAnalyze() {
+	if len(os.Args) != 5 {
+		fmt.Println("Usage: go run ./cmd/data analyze <username> <year> <month>")
+		os.Exit(1)
+	}
+
+	username := os.Args[2]
+	year, err := strconv.Atoi(os.Args[3])
 	if err != nil {
 		log.Fatalf("Invalid year: %v", err)
 	}
-	month := os.Args[3]
+	month := os.Args[4]
 
 	date := models.YearMonth{
 		Year:  year,
@@ -184,4 +266,15 @@ func main() {
 
 	fmt.Printf("Successfully analyzed %d games in %s (%.2f games/sec)\n",
 		len(gamesToAnalyze), elapsed.Round(time.Millisecond), gamesPerSecond)
+
+	// Refresh aggregate stats after analysis
+	fmt.Println("\nRefreshing aggregate stats...")
+	stats, err := database.RefreshPlayerStats(context.Background(), username)
+	if err != nil {
+		log.Printf("Warning: Failed to refresh stats: %v", err)
+	} else {
+		fmt.Printf("Stats updated: %d total games, %.1f%% win rate\n",
+			stats.TotalGames, 
+			float64(stats.Wins)/float64(stats.TotalGames)*100)
+	}
 }
