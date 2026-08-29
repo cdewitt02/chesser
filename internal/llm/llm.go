@@ -81,8 +81,16 @@ type Embedder interface {
 	Name() string
 }
 
-// StreamingChatModel is an optional capability. Nothing implements it yet; it
-// exists so streaming can be added without a breaking change to ChatModel.
+// StreamingChatModel is an optional capability, implemented by both the
+// Anthropic and Ollama adapters. It is separate from ChatModel so a future
+// adapter can omit it: callers type-assert, and an adapter that does not
+// implement it still works.
+//
+// ChatStream must deliver exactly the text Chat would have returned, both
+// through onDelta and in the response. A caller displays the deltas and records
+// the response, so any divergence shows the user one answer and remembers
+// another. An error returned by onDelta is returned unwrapped, so a consumer
+// failure is never mistaken for a provider failure.
 type StreamingChatModel interface {
 	ChatModel
 	ChatStream(ctx context.Context, req ChatRequest, onDelta func(string) error) (*ChatResponse, error)

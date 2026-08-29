@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/chesser/internal/db"
 	"github.com/chesser/internal/llm"
@@ -71,12 +72,35 @@ func NewService(database *db.DB, chatModel llm.ChatModel, embedder llm.Embedder,
 	}
 }
 
-// processes a question using query classification and routing.
+// noDataAnswer is returned verbatim when the corpus is empty. It is markdown,
+// like every other answer, so the caller can render one thing and not two.
+const noDataAnswer = "I don't have any game data to analyze. Make sure you've imported and analyzed some games first."
+
+// Ask processes a question using query classification and routing.
 // Different query types get different context:
 // - Aggregate/Comparative: Focus on pre-computed stats
 // - SpecificGames: Focus on RAG search results
 // - Recommendation: Combine stats + relevant examples
+//
+// The returned answer is markdown source, deliberately unrendered: presentation
+// belongs to the caller, so an eval harness and the terminal REPL see the same
+// text.
 func (s *Service) Ask(ctx context.Context, question string) (string, error) {
+	return s.AskStream(ctx, question, nil)
+}
+
+// AskStream is Ask with incremental delivery. onDelta, when non-nil, receives
+// fragments of the answer as the provider produces them; the complete answer is
+// still returned, so a caller that streams for display does not have to
+// reassemble it.
+//
+// A chat model that does not implement llm.StreamingChatModel still works: the
+// whole answer arrives as a single delta. Callers therefore never need to ask
+// which provider is configured.
+//
+// An error from onDelta aborts the request and is returned unwrapped, so a
+// caller can recognize its own failure.
+func (s *Service) AskStream(ctx context.Context, question string, onDelta func(string) error) (string, error) {
 	qctx, err := s.queryRouter.Route(ctx, question)
 	if err != nil {
 		return "", fmt.Errorf("failed to route query: %w", err)
@@ -86,7 +110,9 @@ func (s *Service) Ask(ctx context.Context, question string) (string, error) {
 	hasGames := len(qctx.Games) > 0
 
 	if !hasStats && !hasGames {
-		return "I don't have any game data to analyze. Make sure you've imported and analyzed some games first.", nil
+		// Not streamed: there is no provider call to stream, and emitting it
+		// as a delta would make the caller erase and repaint identical text.
+		return noDataAnswer, nil
 	}
 
 	systemPrompt := s.queryRouter.BuildPrompt(qctx, s.detailLimit)
@@ -101,11 +127,27 @@ func (s *Service) Ask(ctx context.Context, question string) (string, error) {
 	messages = append(messages, s.history...)
 	messages = append(messages, llm.Message{Role: llm.RoleUser, Content: question})
 
-	resp, err := s.chat.Chat(ctx, llm.ChatRequest{
+	req := llm.ChatRequest{
 		System:   systemPrompt,
 		Messages: messages,
 		Model:    s.chatModel,
-	})
+	}
+
+	var resp *llm.ChatResponse
+	streamer, canStream := s.chat.(llm.StreamingChatModel)
+	switch {
+	case onDelta != nil && canStream:
+		resp, err = streamer.ChatStream(ctx, req, onDelta)
+	case onDelta != nil:
+		resp, err = s.chat.Chat(ctx, req)
+		if err == nil {
+			if derr := onDelta(resp.Text); derr != nil {
+				return "", derr
+			}
+		}
+	default:
+		resp, err = s.chat.Chat(ctx, req)
+	}
 	if err != nil {
 		return "", fmt.Errorf("failed to generate response: %w", err)
 	}
@@ -117,12 +159,25 @@ func (s *Service) Ask(ctx context.Context, question string) (string, error) {
 	)
 	s.truncateHistory()
 
-	fmt.Printf("=== QUERY TYPE: %s ===\n", qctx.QueryType)
-	fmt.Println("=== SYSTEM PROMPT ===")
-	fmt.Println(systemPrompt)
-	fmt.Println("=== END PROMPT ===")
+	s.debugPrompt(qctx.QueryType, systemPrompt)
 
 	return response, nil
+}
+
+// debugPrompt dumps the assembled prompt when CHESSER_DEBUG_PROMPT is set.
+//
+// This used to print unconditionally, which buried every answer under a few
+// hundred lines of game summaries — the single largest readability problem in
+// the REPL. It goes to stderr so that redirecting stdout still captures a clean
+// transcript.
+func (s *Service) debugPrompt(queryType any, systemPrompt string) {
+	if os.Getenv("CHESSER_DEBUG_PROMPT") == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "=== QUERY TYPE: %v ===\n", queryType)
+	fmt.Fprintln(os.Stderr, "=== SYSTEM PROMPT ===")
+	fmt.Fprintln(os.Stderr, systemPrompt)
+	fmt.Fprintln(os.Stderr, "=== END PROMPT ===")
 }
 
 func (s *Service) truncateHistory() {

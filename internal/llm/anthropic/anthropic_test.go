@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -257,5 +258,152 @@ func TestPreflightInconclusiveWhenListingFails(t *testing.T) {
 	err := newChat(t, srv.URL).Preflight(context.Background())
 	if !errors.Is(err, llm.ErrPreflightInconclusive) {
 		t.Fatalf("error = %v, want it to wrap %v", err, llm.ErrPreflightInconclusive)
+	}
+}
+
+// sse writes a series of Anthropic stream events as text/event-stream, which is
+// the only shape the SDK's stream decoder accepts.
+func sse(events []map[string]any) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		for _, ev := range events {
+			payload, err := json.Marshal(ev)
+			if err != nil {
+				panic(err)
+			}
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev["type"], payload)
+			// Flushing per event is what makes this a stream rather than one
+			// buffered body arriving at the end.
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	}
+}
+
+// streamEvents builds a well-formed message stream that emits deltas in order
+// and closes with the given stop reason.
+func streamEvents(deltas []string, stopReason string) []map[string]any {
+	events := []map[string]any{
+		{"type": "message_start", "message": map[string]any{
+			"id": "msg_1", "type": "message", "role": "assistant", "model": testModel,
+			"content": []any{}, "stop_reason": nil,
+			"usage": map[string]any{"input_tokens": 3000, "output_tokens": 0},
+		}},
+		{"type": "content_block_start", "index": 0,
+			"content_block": map[string]any{"type": "text", "text": ""}},
+	}
+	for _, d := range deltas {
+		events = append(events, map[string]any{
+			"type": "content_block_delta", "index": 0,
+			"delta": map[string]any{"type": "text_delta", "text": d},
+		})
+	}
+	return append(events,
+		map[string]any{"type": "content_block_stop", "index": 0},
+		map[string]any{"type": "message_delta",
+			"delta": map[string]any{"stop_reason": stopReason, "stop_sequence": nil},
+			"usage": map[string]any{"output_tokens": 500}},
+		map[string]any{"type": "message_stop"},
+	)
+}
+
+func TestChatStreamConformance(t *testing.T) {
+	llmtest.StreamConformance{
+		Provider: "anthropic",
+		New: func(baseURL string) (llm.StreamingChatModel, error) {
+			noRetry := 0
+			return llmanthropic.NewChat(llmanthropic.Config{
+				APIKey: "test-key", Model: testModel, BaseURL: baseURL,
+				MaxRetries: &noRetry,
+			})
+		},
+		Fixtures: map[llmtest.Scenario]http.HandlerFunc{
+			llmtest.ScenarioSuccess:   sse(streamEvents([]string{"You ", "hang ", "pawns."}, "end_turn")),
+			llmtest.ScenarioTruncated: sse(streamEvents([]string{"You ", "hang"}, "max_tokens")),
+			// A stream that opens a text block and never fills it is the
+			// streaming form of an empty completion.
+			llmtest.ScenarioEmptyContent: sse(streamEvents(nil, "end_turn")),
+			llmtest.ScenarioUnauthorized: status(401, `{"type":"error","error":{"type":"authentication_error","message":"invalid key"}}`),
+			llmtest.ScenarioRateLimited:  status(429, `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`),
+			llmtest.ScenarioServerError:  status(500, `{"type":"error","error":{"type":"api_error","message":"boom"}}`),
+		},
+	}.Run(t)
+}
+
+// TestChatStreamMatchesChat pins the equivalence the REPL depends on: the same
+// answer, delivered either way, produces the same normalized response.
+func TestChatStreamMatchesChat(t *testing.T) {
+	const answer = "You hang pawns."
+
+	bufSrv := httptest.NewServer(message(textBlocks(answer), "end_turn"))
+	defer bufSrv.Close()
+	strSrv := httptest.NewServer(sse(streamEvents([]string{"You ", "hang ", "pawns."}, "end_turn")))
+	defer strSrv.Close()
+
+	buffered, err := newChat(t, bufSrv.URL).Chat(context.Background(), llmtest.SampleRequest())
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	streamed, err := newChat(t, strSrv.URL).ChatStream(context.Background(), llmtest.SampleRequest(), func(string) error { return nil })
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+
+	if streamed.Text != buffered.Text {
+		t.Errorf("streamed text = %q, buffered = %q", streamed.Text, buffered.Text)
+	}
+	if streamed.FinishReason != buffered.FinishReason {
+		t.Errorf("streamed FinishReason = %q, buffered = %q", streamed.FinishReason, buffered.FinishReason)
+	}
+	if streamed.Model != buffered.Model {
+		t.Errorf("streamed Model = %q, buffered = %q", streamed.Model, buffered.Model)
+	}
+	if streamed.Usage != buffered.Usage {
+		t.Errorf("streamed Usage = %+v, buffered = %+v", streamed.Usage, buffered.Usage)
+	}
+}
+
+// TestChatStreamSkipsThinkingDeltas guards the one way a stream can show the
+// user text the buffered path filters out.
+func TestChatStreamSkipsThinkingDeltas(t *testing.T) {
+	events := []map[string]any{
+		{"type": "message_start", "message": map[string]any{
+			"id": "msg_1", "type": "message", "role": "assistant", "model": testModel,
+			"content": []any{}, "stop_reason": nil,
+			"usage": map[string]any{"input_tokens": 10, "output_tokens": 0},
+		}},
+		{"type": "content_block_start", "index": 0,
+			"content_block": map[string]any{"type": "thinking", "thinking": "", "signature": ""}},
+		{"type": "content_block_delta", "index": 0,
+			"delta": map[string]any{"type": "thinking_delta", "thinking": "Let me count the pawns."}},
+		{"type": "content_block_delta", "index": 0,
+			"delta": map[string]any{"type": "signature_delta", "signature": "sig123"}},
+		{"type": "content_block_stop", "index": 0},
+		{"type": "content_block_start", "index": 1,
+			"content_block": map[string]any{"type": "text", "text": ""}},
+		{"type": "content_block_delta", "index": 1,
+			"delta": map[string]any{"type": "text_delta", "text": "You hang pawns."}},
+		{"type": "content_block_stop", "index": 1},
+		{"type": "message_delta",
+			"delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil},
+			"usage": map[string]any{"output_tokens": 20}},
+		{"type": "message_stop"},
+	}
+	srv := httptest.NewServer(sse(events))
+	defer srv.Close()
+
+	var got strings.Builder
+	resp, err := newChat(t, srv.URL).ChatStream(context.Background(), llmtest.SampleRequest(),
+		func(d string) error { got.WriteString(d); return nil })
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if got.String() != "You hang pawns." {
+		t.Errorf("deltas = %q, want only the text block", got.String())
+	}
+	if resp.Text != "You hang pawns." {
+		t.Errorf("Text = %q, want only the text block", resp.Text)
 	}
 }

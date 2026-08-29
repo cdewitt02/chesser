@@ -89,6 +89,17 @@ func (p *PromptBuilder) BuildSystemPrompt(games []*db.SimilarGameResult, detailL
 	sb.WriteString("- Give specific, actionable recommendations\n")
 	sb.WriteString("- Use proper chess notation and terminology\n")
 
+	// Formatting is pinned because the answer is rendered as markdown in a
+	// terminal. Left unsaid, models drift between prose, markdown, and
+	// occasional HTML; naming the subset keeps the rendered output stable and
+	// keeps it readable as raw text when styling is unavailable.
+	sb.WriteString("\nFORMATTING:\n")
+	sb.WriteString("- Reply in GitHub-flavored markdown\n")
+	sb.WriteString("- Use ## for section headings, - for bullets, and **bold** for emphasis\n")
+	sb.WriteString("- Put chess moves and openings in `backticks`, and multi-move lines in fenced code blocks\n")
+	sb.WriteString("- Use a markdown table when comparing three or more things across the same fields\n")
+	sb.WriteString("- Do not use HTML, images, or heading levels above ###\n")
+
 	return sb.String()
 }
 

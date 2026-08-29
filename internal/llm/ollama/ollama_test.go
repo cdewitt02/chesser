@@ -216,3 +216,129 @@ func TestPreflightInconclusiveOnBadTagsResponse(t *testing.T) {
 		t.Fatalf("error = %v, want it to wrap %v", err, llm.ErrPreflightInconclusive)
 	}
 }
+
+// ndjson writes newline-delimited JSON objects, which is how Ollama streams:
+// one object per token, then a final object carrying the stats.
+func ndjson(objects []map[string]any) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+		enc := json.NewEncoder(w)
+		for _, obj := range objects {
+			if err := enc.Encode(obj); err != nil {
+				return
+			}
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	}
+}
+
+// streamObjects builds a well-formed chat stream: content-bearing objects, then
+// a terminal object that carries done_reason and the token counts and no text.
+func streamObjects(deltas []string, doneReason string) []map[string]any {
+	objects := make([]map[string]any, 0, len(deltas)+1)
+	for _, d := range deltas {
+		objects = append(objects, map[string]any{
+			"model":   "llama3.2",
+			"message": map[string]string{"role": "assistant", "content": d},
+			"done":    false,
+		})
+	}
+	return append(objects, map[string]any{
+		"model":             "llama3.2",
+		"message":           map[string]string{"role": "assistant", "content": ""},
+		"done":              true,
+		"done_reason":       doneReason,
+		"prompt_eval_count": 42,
+		"eval_count":        7,
+	})
+}
+
+func TestChatStreamConformance(t *testing.T) {
+	llmtest.StreamConformance{
+		Provider: "ollama",
+		New: func(baseURL string) (llm.StreamingChatModel, error) {
+			return ollama.NewChat(ollama.Config{BaseURL: baseURL, Model: "llama3.2"})
+		},
+		Fixtures: map[llmtest.Scenario]http.HandlerFunc{
+			llmtest.ScenarioSuccess:   ndjson(streamObjects([]string{"You ", "hang ", "pawns."}, "stop")),
+			llmtest.ScenarioTruncated: ndjson(streamObjects([]string{"You ", "hang"}, "length")),
+			// A stream whose objects never carry content is the streaming form
+			// of an empty completion.
+			llmtest.ScenarioEmptyContent: ndjson(streamObjects(nil, "stop")),
+			llmtest.ScenarioMalformed:    status(200, "{not json\n"),
+			llmtest.ScenarioUnauthorized: status(401, `{"error":"unauthorized"}`),
+			llmtest.ScenarioRateLimited:  status(429, `{"error":"slow down"}`),
+			llmtest.ScenarioServerError:  status(500, `{"error":"boom"}`),
+		},
+	}.Run(t)
+}
+
+// TestChatStreamMatchesChat pins the equivalence the REPL depends on.
+func TestChatStreamMatchesChat(t *testing.T) {
+	bufSrv := httptest.NewServer(chatBody("You hang pawns.", "stop"))
+	defer bufSrv.Close()
+	strSrv := httptest.NewServer(ndjson(streamObjects([]string{"You ", "hang ", "pawns."}, "stop")))
+	defer strSrv.Close()
+
+	buffered, err := newChat(t, bufSrv.URL).Chat(context.Background(), llmtest.SampleRequest())
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	streamed, err := newChat(t, strSrv.URL).ChatStream(context.Background(), llmtest.SampleRequest(), func(string) error { return nil })
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+
+	if streamed.Text != buffered.Text {
+		t.Errorf("streamed text = %q, buffered = %q", streamed.Text, buffered.Text)
+	}
+	if streamed.FinishReason != buffered.FinishReason {
+		t.Errorf("streamed FinishReason = %q, buffered = %q", streamed.FinishReason, buffered.FinishReason)
+	}
+	if streamed.Usage != buffered.Usage {
+		t.Errorf("streamed Usage = %+v, buffered = %+v", streamed.Usage, buffered.Usage)
+	}
+}
+
+// TestChatStreamSetsStreamFlag guards the flag itself: without it Ollama
+// answers with one buffered object, the conformance suite's several-deltas
+// assertion is the only thing that would notice, and only by accident.
+func TestChatStreamSetsStreamFlag(t *testing.T) {
+	var gotStream any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		gotStream = body["stream"]
+		ndjson(streamObjects([]string{"ok"}, "stop"))(w, r)
+	}))
+	defer srv.Close()
+
+	if _, err := newChat(t, srv.URL).ChatStream(context.Background(), llmtest.SampleRequest(),
+		func(string) error { return nil }); err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if gotStream != true {
+		t.Errorf("request stream = %v, want true", gotStream)
+	}
+}
+
+// TestChatStreamMidStreamError covers Ollama's habit of reporting failures in
+// the body of a 200 response, where a status check alone would miss them.
+func TestChatStreamMidStreamError(t *testing.T) {
+	srv := httptest.NewServer(ndjson([]map[string]any{
+		{"model": "llama3.2", "message": map[string]string{"role": "assistant", "content": "You "}, "done": false},
+		{"error": "model runner has unexpectedly stopped"},
+	}))
+	defer srv.Close()
+
+	_, err := newChat(t, srv.URL).ChatStream(context.Background(), llmtest.SampleRequest(),
+		func(string) error { return nil })
+	if !errors.Is(err, llm.ErrBadResponse) {
+		t.Fatalf("error = %v, want it to wrap %v", err, llm.ErrBadResponse)
+	}
+}

@@ -98,11 +98,66 @@ func NewChat(cfg Config) (*ChatModel, error) {
 func (m *ChatModel) Name() string { return ProviderName }
 
 func (m *ChatModel) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+	params, model, err := m.buildParams(req)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := m.client.Messages.New(ctx, *params)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return buildResponse(resp, model)
+}
+
+// ChatStream is the same request as Chat, delivered incrementally. onDelta
+// receives text fragments only: thinking and tool-use deltas are skipped, for
+// the same reason Chat skips those blocks.
+//
+// The accumulated message is the identical shape Chat receives, so both paths
+// share buildResponse and cannot drift on refusal handling, truncation, or
+// usage accounting.
+func (m *ChatModel) ChatStream(ctx context.Context, req llm.ChatRequest, onDelta func(string) error) (*llm.ChatResponse, error) {
+	params, model, err := m.buildParams(req)
+	if err != nil {
+		return nil, err
+	}
+
+	stream := m.client.Messages.NewStreaming(ctx, *params)
+	var acc sdk.Message
+	for stream.Next() {
+		event := stream.Current()
+		if err := acc.Accumulate(event); err != nil {
+			return nil, llm.WrapErr(ProviderName, "chat", llm.ErrBadResponse, err)
+		}
+		delta, ok := event.AsAny().(sdk.ContentBlockDeltaEvent)
+		if !ok {
+			continue
+		}
+		text, ok := delta.Delta.AsAny().(sdk.TextDelta)
+		if !ok || text.Text == "" {
+			continue
+		}
+		if err := onDelta(text.Text); err != nil {
+			// A consumer failure is the consumer's error, not the provider's;
+			// it must not be classified as a provider fault.
+			return nil, err
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return nil, classify(err)
+	}
+	return buildResponse(&acc, model)
+}
+
+// buildParams translates a ChatRequest into SDK params and reports the model
+// the request will be sent to.
+func (m *ChatModel) buildParams(req llm.ChatRequest) (*sdk.MessageNewParams, string, error) {
 	// Anthropic requires messages to begin with a user turn and to alternate.
 	// Today's history assembly satisfies that by accident; here it becomes
 	// guaranteed, with a clear error instead of a passed-through 400.
 	if err := llm.ValidateMessages(req.Messages); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	model := req.Model
@@ -141,11 +196,12 @@ func (m *ChatModel) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatRes
 		params.StopSequences = req.StopAfter
 	}
 
-	resp, err := m.client.Messages.New(ctx, params)
-	if err != nil {
-		return nil, classify(err)
-	}
+	return &params, model, nil
+}
 
+// buildResponse normalizes a completed message, whether it arrived in one
+// response or was accumulated from a stream.
+func buildResponse(resp *sdk.Message, model string) (*llm.ChatResponse, error) {
 	// content is an array of typed blocks. Concatenate the text ones and skip
 	// everything else — notably thinking blocks, which a naive read would
 	// either drop the answer for or splice reasoning into it.
@@ -278,6 +334,7 @@ func hint(model string) string {
 }
 
 var (
-	_ llm.ChatModel   = (*ChatModel)(nil)
-	_ llm.Preflighter = (*ChatModel)(nil)
+	_ llm.ChatModel          = (*ChatModel)(nil)
+	_ llm.StreamingChatModel = (*ChatModel)(nil)
+	_ llm.Preflighter        = (*ChatModel)(nil)
 )

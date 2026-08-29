@@ -10,6 +10,7 @@
 package ollama
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -130,6 +131,73 @@ func (c *client) postJSON(ctx context.Context, op, path string, body, out any) e
 	return nil
 }
 
+// postStream sends body to path and hands each newline-delimited JSON object in
+// the response to onObject as it arrives.
+//
+// Ollama streams NDJSON rather than SSE, so this is a scanner over the body
+// instead of an event parser. Errors are mapped onto the same sentinels
+// postJSON uses: a stream that fails must be indistinguishable, to the caller,
+// from a non-streaming call that failed the same way.
+func (c *client) postStream(ctx context.Context, op, path string, body any, onObject func([]byte) error) error {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return llm.WrapErr(ProviderName, op, llm.ErrInvalidRequest, err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
+	if err != nil {
+		return llm.WrapErr(ProviderName, op, llm.ErrInvalidRequest, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return llm.WrapErr(ProviderName, op, llm.ErrUnavailable, ctx.Err())
+		}
+		return llm.Errf(ProviderName, op, llm.ErrUnavailable,
+			"%v (is Ollama running at %s?)", err, c.baseURL)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// The error body is small and not streamed, so reading it whole is
+		// safe and gives the same message the non-streaming path produces.
+		respBody, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == 404 {
+			return llm.Errf(ProviderName, op, llm.ErrModelNotFound,
+				"status %d: %s (try: ollama pull %s)", resp.StatusCode, snippet(respBody), c.model)
+		}
+		return llm.Errf(ProviderName, op, llm.ClassifyStatus(resp.StatusCode),
+			"status %d: %s", resp.StatusCode, snippet(respBody))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	// A single NDJSON object holds one token's worth of text, but the final
+	// object carries the full stats block. The default 64KB limit is ample;
+	// raising it costs nothing and removes a failure mode that would only
+	// appear on unusual responses.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		if err := onObject(line); err != nil {
+			return err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		if ctx.Err() != nil {
+			return llm.WrapErr(ProviderName, op, llm.ErrUnavailable, ctx.Err())
+		}
+		// A stream that stops mid-response is a transport failure, not a bad
+		// body: nothing about the JSON we did receive was malformed.
+		return llm.WrapErr(ProviderName, op, llm.ErrUnavailable, err)
+	}
+	return nil
+}
+
 func snippet(b []byte) string {
 	s := strings.TrimSpace(string(b))
 	if len(s) > 300 {
@@ -172,14 +240,74 @@ type chatResp struct {
 	Model      string      `json:"model"`
 	Message    chatMessage `json:"message"`
 	DoneReason string      `json:"done_reason"`
+	// Error carries a mid-stream failure, which Ollama reports inside a 200
+	// response body rather than as a status code.
+	Error string `json:"error"`
 
 	PromptEvalCount int `json:"prompt_eval_count"`
 	EvalCount       int `json:"eval_count"`
 }
 
 func (m *ChatModel) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
-	if err := llm.ValidateMessages(req.Messages); err != nil {
+	body, model, err := m.buildChatReq(req, false)
+	if err != nil {
 		return nil, err
+	}
+
+	var out chatResp
+	if err := m.postJSON(ctx, "chat", "/api/chat", body, &out); err != nil {
+		return nil, err
+	}
+	return buildResponse(&out, model, out.Message.Content)
+}
+
+// ChatStream is the same request as Chat with Ollama's stream flag set. onDelta
+// receives each token's text as it arrives.
+//
+// Ollama streams partial messages and then a final object carrying the stats
+// and done_reason, so the deltas are concatenated here rather than trusting any
+// single object to hold the whole answer.
+func (m *ChatModel) ChatStream(ctx context.Context, req llm.ChatRequest, onDelta func(string) error) (*llm.ChatResponse, error) {
+	body, model, err := m.buildChatReq(req, true)
+	if err != nil {
+		return nil, err
+	}
+
+	var full strings.Builder
+	var last chatResp
+	err = m.postStream(ctx, "chat", "/api/chat", body, func(line []byte) error {
+		var out chatResp
+		if err := json.Unmarshal(line, &out); err != nil {
+			return llm.Errf(ProviderName, "chat", llm.ErrBadResponse, "%v: %s", err, snippet(line))
+		}
+		// Ollama reports mid-stream errors in the body of a 200 response, so
+		// this is the only place they can be caught.
+		if out.Error != "" {
+			return llm.Errf(ProviderName, "chat", llm.ErrBadResponse, "%s", out.Error)
+		}
+		last = out
+		if out.Message.Content == "" {
+			return nil
+		}
+		full.WriteString(out.Message.Content)
+		if err := onDelta(out.Message.Content); err != nil {
+			// A consumer failure is the consumer's error, not the provider's;
+			// it must not be classified as a provider fault.
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return buildResponse(&last, model, full.String())
+}
+
+// buildChatReq translates a ChatRequest into an Ollama request body and reports
+// the model the request will be sent to.
+func (m *ChatModel) buildChatReq(req llm.ChatRequest, stream bool) (*chatReq, string, error) {
+	if err := llm.ValidateMessages(req.Messages); err != nil {
+		return nil, "", err
 	}
 
 	model := req.Model
@@ -197,7 +325,7 @@ func (m *ChatModel) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatRes
 		msgs = append(msgs, chatMessage{Role: string(msg.Role), Content: msg.Content})
 	}
 
-	body := chatReq{Model: model, Messages: msgs, Stream: false}
+	body := &chatReq{Model: model, Messages: msgs, Stream: stream}
 	if req.Temperature != nil || req.MaxTokens > 0 || len(req.StopAfter) > 0 {
 		body.Options = &chatOptions{
 			Temperature: req.Temperature,
@@ -205,13 +333,14 @@ func (m *ChatModel) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatRes
 			Stop:        req.StopAfter,
 		}
 	}
+	return body, model, nil
+}
 
-	var out chatResp
-	if err := m.postJSON(ctx, "chat", "/api/chat", body, &out); err != nil {
-		return nil, err
-	}
-
-	text := strings.TrimSpace(out.Message.Content)
+// buildResponse normalizes a completed exchange. text is passed separately
+// because a streamed answer is assembled from many objects while out holds only
+// the last one.
+func buildResponse(out *chatResp, model, text string) (*llm.ChatResponse, error) {
+	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil, llm.Errf(ProviderName, "chat", llm.ErrBadResponse,
 			"model %s returned no content", model)
@@ -351,8 +480,9 @@ func preflight(ctx context.Context, c *client, op string) error {
 }
 
 var (
-	_ llm.ChatModel   = (*ChatModel)(nil)
-	_ llm.Embedder    = (*Embedder)(nil)
-	_ llm.Preflighter = (*ChatModel)(nil)
-	_ llm.Preflighter = (*Embedder)(nil)
+	_ llm.ChatModel          = (*ChatModel)(nil)
+	_ llm.StreamingChatModel = (*ChatModel)(nil)
+	_ llm.Embedder           = (*Embedder)(nil)
+	_ llm.Preflighter        = (*ChatModel)(nil)
+	_ llm.Preflighter        = (*Embedder)(nil)
 )

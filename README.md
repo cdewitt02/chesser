@@ -101,9 +101,25 @@ which model produced which.
 | `OLLAMA_URL` | Ollama server URL (honored by both entrypoints) | `http://localhost:11434` |
 | `OLLAMA_EMBED_MODEL` | Alias for `EMBED_MODEL` when the embed provider is Ollama | `nomic-embed-text` |
 | `NUM_WORKERS` | Parallel analysis workers | `4` |
+| `NO_COLOR` | Set to any value to print raw markdown instead of styled output | — |
+| `CHESSER_DEBUG_PROMPT` | Set to any value to dump the assembled prompt to stderr | — |
 
 Credentials come from the environment only, under the provider-standard names.
 See `.env.example`.
+
+### Terminal output
+
+The coach answers in markdown, and `cmd/chat` renders it in place: headings,
+bullets, tables, and fenced code blocks are styled to the terminal's width and
+light/dark background. The reply streams in as plain text while the model works,
+then is repainted once as the finished document — markdown cannot be laid out
+incrementally, because wrapping and table widths are properties of the whole
+answer.
+
+Styling is skipped, and the raw markdown printed instead, whenever stdout is not
+a terminal, `NO_COLOR` is set, or `TERM` reports a terminal that cannot render
+it. So `chat charlie > notes.md` captures clean markdown rather than escape
+codes.
 
 ### Changing the embedding model
 
