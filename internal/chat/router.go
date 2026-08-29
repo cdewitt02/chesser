@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/chesser/internal/db"
-	"github.com/chesser/internal/models"
-	"github.com/chesser/internal/search"
+	"github.com/cdewitt02/chesser/internal/db"
+	"github.com/cdewitt02/chesser/internal/models"
+	"github.com/cdewitt02/chesser/internal/search"
 )
 
 // returns a pre-computed comparison string for win rates.

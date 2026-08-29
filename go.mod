@@ -1,16 +1,15 @@
-module github.com/chesser
+module github.com/cdewitt02/chesser
 
-go 1.24.0
-
-toolchain go1.24.12
+go 1.25.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.68.0
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/notnil/chess v1.10.0
+	github.com/openai/openai-go/v3 v3.54.0
 	github.com/pgvector/pgvector-go v0.3.0
-	golang.org/x/term v0.36.0
+	golang.org/x/term v0.45.0
 )
 
 require (
@@ -40,7 +39,7 @@ require (
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
-	github.com/tidwall/gjson v1.18.0 // indirect
+	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
@@ -48,8 +47,8 @@ require (
 	github.com/yuin/goldmark v1.7.13 // indirect
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
-	golang.org/x/net v0.41.0 // indirect
-	golang.org/x/sync v0.17.0 // indirect
-	golang.org/x/sys v0.37.0 // indirect
-	golang.org/x/text v0.30.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 )

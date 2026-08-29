@@ -9,10 +9,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/chesser/internal/chat"
-	"github.com/chesser/internal/config"
-	"github.com/chesser/internal/db"
-	"github.com/chesser/internal/render"
+	"github.com/cdewitt02/chesser/internal/chat"
+	"github.com/cdewitt02/chesser/internal/config"
+	"github.com/cdewitt02/chesser/internal/db"
+	"github.com/cdewitt02/chesser/internal/render"
 )
 
 const (

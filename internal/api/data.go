@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"github.com/chesser/internal/models"
+	"github.com/cdewitt02/chesser/internal/models"
 )
 
 type Response struct {

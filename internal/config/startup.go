@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/chesser/internal/db"
-	"github.com/chesser/internal/llm"
+	"github.com/cdewitt02/chesser/internal/db"
+	"github.com/cdewitt02/chesser/internal/llm"
 )
 
 // Preflight runs an adapter's reachability, credential, and model checks.

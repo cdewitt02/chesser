@@ -3,7 +3,7 @@ package summary
 import (
 	"fmt"
 
-	"github.com/chesser/internal/models"
+	"github.com/cdewitt02/chesser/internal/models"
 )
 
 const (

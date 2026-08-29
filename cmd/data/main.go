@@ -8,11 +8,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/chesser/internal/api"
-	"github.com/chesser/internal/config"
-	"github.com/chesser/internal/db"
-	"github.com/chesser/internal/llm"
-	"github.com/chesser/internal/models"
+	"github.com/cdewitt02/chesser/internal/api"
+	"github.com/cdewitt02/chesser/internal/config"
+	"github.com/cdewitt02/chesser/internal/db"
+	"github.com/cdewitt02/chesser/internal/llm"
+	"github.com/cdewitt02/chesser/internal/models"
 )
 
 // Struct to parse the test data JSON

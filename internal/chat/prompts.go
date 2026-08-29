@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/chesser/internal/db"
+	"github.com/cdewitt02/chesser/internal/db"
 )
 
 type PromptBuilder struct {

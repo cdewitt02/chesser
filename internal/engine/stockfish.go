@@ -3,7 +3,7 @@ package engine
 import (
 	"strings"
 
-	"github.com/chesser/internal/models"
+	"github.com/cdewitt02/chesser/internal/models"
 	"github.com/notnil/chess"
 	"github.com/notnil/chess/uci"
 )

@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/chesser/internal/llm"
+	"github.com/cdewitt02/chesser/internal/llm"
 )
 
 // Scenario names a wire-level situation every provider can produce. The JSON

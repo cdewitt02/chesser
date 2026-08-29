@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/chesser/internal/llm/llmtest"
-	"github.com/chesser/internal/search"
+	"github.com/cdewitt02/chesser/internal/llm/llmtest"
+	"github.com/cdewitt02/chesser/internal/search"
 )
 
 // stubSearcher stands in for the database.

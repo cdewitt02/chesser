@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chesser/internal/llm"
+	"github.com/cdewitt02/chesser/internal/llm"
 )
 
 const (

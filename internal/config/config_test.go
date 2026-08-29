@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chesser/internal/config"
+	"github.com/cdewitt02/chesser/internal/config"
 )
 
 func envOf(pairs map[string]string) config.Env {
@@ -90,6 +90,69 @@ func TestResolvePrecedence(t *testing.T) {
 			wantEmbedMdl:  "nomic-embed-text",
 			wantOllamaURL: "http://localhost:11434",
 		},
+		{
+			name:          "openai chat keeps embeddings local",
+			env:           map[string]string{"CHAT_PROVIDER": "openai", "OPENAI_API_KEY": "sk-test"},
+			wantChatProv:  "openai",
+			wantChatModel: "gpt-5-2025-08-07",
+			wantEmbedProv: "ollama",
+			wantEmbedMdl:  "nomic-embed-text",
+			wantOllamaURL: "http://localhost:11434",
+		},
+		{
+			// The configuration that removes Ollama from the prerequisite
+			// list entirely: both providers hosted.
+			name: "openai for both chat and embeddings",
+			env: map[string]string{
+				"CHAT_PROVIDER": "openai", "EMBED_PROVIDER": "openai", "OPENAI_API_KEY": "sk-test",
+			},
+			wantChatProv:  "openai",
+			wantChatModel: "gpt-5-2025-08-07",
+			wantEmbedProv: "openai",
+			wantEmbedMdl:  "text-embedding-3-small",
+			wantOllamaURL: "http://localhost:11434",
+		},
+		{
+			// The headline mix: hosted chat, local embeddings already
+			// indexed. It must require no re-embedding.
+			name: "anthropic chat with openai embeddings",
+			env: map[string]string{
+				"CHAT_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "sk-ant",
+				"EMBED_PROVIDER": "openai", "OPENAI_API_KEY": "sk-test",
+			},
+			wantChatProv:  "anthropic",
+			wantChatModel: "claude-opus-5",
+			wantEmbedProv: "openai",
+			wantEmbedMdl:  "text-embedding-3-small",
+			wantOllamaURL: "http://localhost:11434",
+		},
+		{
+			// The alias is scoped to Ollama. A user who switches embed
+			// providers with OLLAMA_EMBED_MODEL still exported must not send
+			// an Ollama model name to OpenAI.
+			name: "OLLAMA_EMBED_MODEL does not leak into another embed provider",
+			env: map[string]string{
+				"EMBED_PROVIDER": "openai", "OPENAI_API_KEY": "sk-test",
+				"OLLAMA_EMBED_MODEL": "nomic-embed-text",
+			},
+			wantChatProv:  "ollama",
+			wantChatModel: "llama3.2",
+			wantEmbedProv: "openai",
+			wantEmbedMdl:  "text-embedding-3-small",
+			wantOllamaURL: "http://localhost:11434",
+		},
+		{
+			name: "EMBED_MODEL applies to a hosted embed provider",
+			env: map[string]string{
+				"EMBED_PROVIDER": "openai", "OPENAI_API_KEY": "sk-test",
+				"EMBED_MODEL": "text-embedding-3-large",
+			},
+			wantChatProv:  "ollama",
+			wantChatModel: "llama3.2",
+			wantEmbedProv: "openai",
+			wantEmbedMdl:  "text-embedding-3-large",
+			wantOllamaURL: "http://localhost:11434",
+		},
 	}
 
 	for _, tc := range cases {
@@ -126,14 +189,19 @@ func TestResolveErrors(t *testing.T) {
 		{
 			name:     "unknown chat provider lists valid values",
 			env:      map[string]string{"CHAT_PROVIDER": "gemini"},
-			wantText: []string{"CHAT_PROVIDER", "ollama", "anthropic"},
+			wantText: []string{"CHAT_PROVIDER", "ollama", "anthropic", "openai"},
+		},
+		{
+			name:     "unknown embed provider lists valid values",
+			env:      map[string]string{"EMBED_PROVIDER": "voyage"},
+			wantText: []string{"EMBED_PROVIDER", "ollama", "openai"},
 		},
 		{
 			// Anthropic has no embeddings API, so this is explained rather
 			// than silently falling back.
 			name:     "anthropic embeddings are refused with an explanation",
 			env:      map[string]string{"EMBED_PROVIDER": "anthropic"},
-			wantText: []string{"no embeddings API", "EMBED_PROVIDER=ollama"},
+			wantText: []string{"no embeddings API", "EMBED_PROVIDER=ollama", "EMBED_PROVIDER=openai"},
 		},
 	}
 
@@ -169,6 +237,31 @@ func TestMissingAPIKeyFailsWhenBuildingTheChatModel(t *testing.T) {
 	// The embedder is unaffected: it never needed that credential.
 	if _, err := cfg.NewEmbedder(); err != nil {
 		t.Errorf("NewEmbedder: %v", err)
+	}
+}
+
+// OpenAI is the one provider whose key both halves need, so a missing key must
+// be reported by whichever half is being built.
+func TestMissingOpenAIKeyFailsForBothHalves(t *testing.T) {
+	cfg, err := config.Resolve(envOf(map[string]string{
+		"CHAT_PROVIDER": "openai", "EMBED_PROVIDER": "openai",
+	}), "")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	for name, build := range map[string]func() error{
+		"chat":     func() error { _, err := cfg.NewChatModel(); return err },
+		"embedder": func() error { _, err := cfg.NewEmbedder(); return err },
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := build()
+			if err == nil {
+				t.Fatal("want an error, got nil")
+			}
+			if !strings.Contains(err.Error(), "OPENAI_API_KEY") {
+				t.Errorf("error = %q, want it to name OPENAI_API_KEY", err)
+			}
+		})
 	}
 }
 

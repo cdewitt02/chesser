@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/chesser/internal/llm"
-	"github.com/chesser/internal/llm/llmtest"
-	"github.com/chesser/internal/llm/ollama"
+	"github.com/cdewitt02/chesser/internal/llm"
+	"github.com/cdewitt02/chesser/internal/llm/llmtest"
+	"github.com/cdewitt02/chesser/internal/llm/ollama"
 )
 
 func newChat(t *testing.T, baseURL string) *ollama.ChatModel {

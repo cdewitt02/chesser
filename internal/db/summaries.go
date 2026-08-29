@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/chesser/internal/search"
+	"github.com/cdewitt02/chesser/internal/search"
 	"github.com/pgvector/pgvector-go"
 )
 

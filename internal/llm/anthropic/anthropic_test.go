@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chesser/internal/llm"
-	llmanthropic "github.com/chesser/internal/llm/anthropic"
-	"github.com/chesser/internal/llm/llmtest"
+	"github.com/cdewitt02/chesser/internal/llm"
+	llmanthropic "github.com/cdewitt02/chesser/internal/llm/anthropic"
+	"github.com/cdewitt02/chesser/internal/llm/llmtest"
 )
 
 const testModel = "claude-opus-5"

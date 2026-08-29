@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/chesser/internal/db"
-	"github.com/chesser/internal/llm"
-	"github.com/chesser/internal/search"
+	"github.com/cdewitt02/chesser/internal/db"
+	"github.com/cdewitt02/chesser/internal/llm"
+	"github.com/cdewitt02/chesser/internal/search"
 )
 
 type Service struct {

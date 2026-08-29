@@ -7,11 +7,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/chesser/internal/db"
-	"github.com/chesser/internal/engine"
-	"github.com/chesser/internal/llm"
-	"github.com/chesser/internal/models"
-	"github.com/chesser/internal/summary"
+	"github.com/cdewitt02/chesser/internal/db"
+	"github.com/cdewitt02/chesser/internal/engine"
+	"github.com/cdewitt02/chesser/internal/llm"
+	"github.com/cdewitt02/chesser/internal/models"
+	"github.com/cdewitt02/chesser/internal/summary"
 	"github.com/notnil/chess/uci"
 )
 

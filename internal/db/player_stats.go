@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/chesser/internal/models"
+	"github.com/cdewitt02/chesser/internal/models"
 	"github.com/jackc/pgx/v5"
 )
 

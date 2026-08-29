@@ -10,7 +10,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/chesser/internal/llm"
+	"github.com/cdewitt02/chesser/internal/llm"
 )
 
 // FakeEmbedder returns deterministic vectors without any network.

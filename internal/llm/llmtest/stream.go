@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chesser/internal/llm"
+	"github.com/cdewitt02/chesser/internal/llm"
 )
 
 // StreamConformance runs the streaming half of the shared suite.
