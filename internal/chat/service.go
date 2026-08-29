@@ -5,21 +5,21 @@ import (
 	"fmt"
 
 	"github.com/chesser/internal/db"
-	"github.com/chesser/internal/embeddings"
+	"github.com/chesser/internal/llm"
 	"github.com/chesser/internal/search"
 )
 
 type Service struct {
-	db             *db.DB
-	ollama         *embeddings.Client
-	chatModel      string
-	username       string
-	numSimilar     int
-	promptBuilder  *PromptBuilder
-	hybridSearcher *search.HybridSearcher
-	queryRouter    *QueryRouter
-	detailLimit    int
-	history        []embeddings.ChatMessage
+	db              *db.DB
+	chat            llm.ChatModel
+	chatModel       string
+	username        string
+	numSimilar      int
+	promptBuilder   *PromptBuilder
+	hybridSearcher  *search.HybridSearcher
+	queryRouter     *QueryRouter
+	detailLimit     int
+	history         []llm.Message
 	maxHistoryPairs int
 }
 
@@ -31,7 +31,11 @@ type Config struct {
 	MaxHistoryPairs int
 }
 
-func NewService(database *db.DB, ollamaClient *embeddings.Client, cfg Config) *Service {
+// NewService wires the two model roles separately. They used to be one
+// concrete Ollama client doing double duty; a chat provider and an embedding
+// provider are now independently selectable, which is what makes "same index,
+// different chat model" a configurable experiment.
+func NewService(database *db.DB, chatModel llm.ChatModel, embedder llm.Embedder, cfg Config) *Service {
 	numSimilar := cfg.NumSimilar
 	if numSimilar <= 0 {
 		numSimilar = 5
@@ -48,13 +52,13 @@ func NewService(database *db.DB, ollamaClient *embeddings.Client, cfg Config) *S
 	}
 
 	dbAdapter := &dbSearchAdapter{db: database}
-	hybridSearcher := search.NewHybridSearcher(ollamaClient, dbAdapter)
+	hybridSearcher := search.NewHybridSearcher(embedder, dbAdapter)
 	promptBuilder := NewPromptBuilder(cfg.Username)
 	queryRouter := NewQueryRouter(database, hybridSearcher, promptBuilder, cfg.Username, numSimilar)
 
 	return &Service{
 		db:              database,
-		ollama:          ollamaClient,
+		chat:            chatModel,
 		chatModel:       cfg.ChatModel,
 		username:        cfg.Username,
 		numSimilar:      numSimilar,
@@ -62,7 +66,7 @@ func NewService(database *db.DB, ollamaClient *embeddings.Client, cfg Config) *S
 		hybridSearcher:  hybridSearcher,
 		queryRouter:     queryRouter,
 		detailLimit:     detailLimit,
-		history:         make([]embeddings.ChatMessage, 0),
+		history:         make([]llm.Message, 0),
 		maxHistoryPairs: maxHistoryPairs,
 	}
 }
@@ -91,20 +95,25 @@ func (s *Service) Ask(ctx context.Context, question string) (string, error) {
 		systemPrompt += fmt.Sprintf("\n\nNote: The search was filtered by: %v", qctx.Filters)
 	}
 
-	messages := []embeddings.ChatMessage{
-		{Role: "system", Content: systemPrompt},
-	}
+	// The system prompt is a field, not messages[0]: Anthropic takes it as a
+	// top-level parameter, and each adapter puts it where its provider wants.
+	messages := make([]llm.Message, 0, len(s.history)+1)
 	messages = append(messages, s.history...)
-	messages = append(messages, embeddings.ChatMessage{Role: "user", Content: question})
+	messages = append(messages, llm.Message{Role: llm.RoleUser, Content: question})
 
-	response, err := s.ollama.Chat(s.chatModel, messages)
+	resp, err := s.chat.Chat(ctx, llm.ChatRequest{
+		System:   systemPrompt,
+		Messages: messages,
+		Model:    s.chatModel,
+	})
 	if err != nil {
 		return "", fmt.Errorf("failed to generate response: %w", err)
 	}
+	response := resp.Text
 
 	s.history = append(s.history,
-		embeddings.ChatMessage{Role: "user", Content: question},
-		embeddings.ChatMessage{Role: "assistant", Content: response},
+		llm.Message{Role: llm.RoleUser, Content: question},
+		llm.Message{Role: llm.RoleAssistant, Content: response},
 	)
 	s.truncateHistory()
 
@@ -125,66 +134,6 @@ func (s *Service) truncateHistory() {
 
 func (s *Service) ClearHistory() {
 	s.history = s.history[:0]
-}
-
-type AskResponse struct {
-	Response         string
-	ExtractedFilters []string
-	GamesFound       int
-}
-
-func (s *Service) AskWithDetails(ctx context.Context, question string) (*AskResponse, error) {
-	// Perform hybrid search
-	searchResult, err := s.hybridSearcher.Search(
-		ctx,
-		search.SearchQuery{
-			Query: question,
-			TopK:  s.numSimilar,
-		},
-		s.username,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to search games: %w", err)
-	}
-
-	if len(searchResult.Games) == 0 {
-		return &AskResponse{
-			Response:   "I don't have any game data to analyze. Make sure you've imported and analyzed some games first.",
-			GamesFound: 0,
-		}, nil
-	}
-
-	// Convert search results
-	dbResults := make([]*db.SimilarGameResult, len(searchResult.Games))
-	for i, g := range searchResult.Games {
-		dbResults[i] = &db.SimilarGameResult{
-			GameUUID:    g.GameUUID,
-			SummaryText: g.SummaryText,
-			Distance:    g.Distance,
-			Game:        g.Game.(*db.GameRecord),
-		}
-	}
-
-	systemPrompt := s.promptBuilder.BuildSystemPrompt(dbResults, s.detailLimit)
-
-    //wrap question with more constraints
-	wrappedQuestion := s.promptBuilder.WrapUserQuestion(question)
-
-	messages := []embeddings.ChatMessage{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: wrappedQuestion},
-	}
-
-	response, err := s.ollama.Chat(s.chatModel, messages)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate response: %w", err)
-	}
-
-	return &AskResponse{
-		Response:         response,
-		ExtractedFilters: searchResult.ExtractedFilters,
-		GamesFound:       len(searchResult.Games),
-	}, nil
 }
 
 // dbSearchAdapter adapts the db.DB to implement search.GameSearcher.

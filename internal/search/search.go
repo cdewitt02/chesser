@@ -5,8 +5,10 @@ import (
 	"fmt"
 )
 
+// EmbeddingClient is the embedding capability HybridSearcher needs.
+// llm.Embedder satisfies it.
 type EmbeddingClient interface {
-	GetEmbedding(text string) ([]float32, error)
+	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 
 type GameSearcher interface {
@@ -77,10 +79,14 @@ func (h *HybridSearcher) Search(ctx context.Context, query SearchQuery, username
 		semanticQuery = query.Query
 	}
 
-	embedding, err := h.embedder.GetEmbedding(semanticQuery)
+	embeddings, err := h.embedder.Embed(ctx, []string{semanticQuery})
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate query embedding: %w", err)
 	}
+	if len(embeddings) != 1 {
+		return nil, fmt.Errorf("expected 1 query embedding, got %d", len(embeddings))
+	}
+	embedding := embeddings[0]
 
 	games, err := h.searcher.FindSimilarGamesWithFilters(ctx, embedding, mergedFilters, topK)
 	if err != nil {

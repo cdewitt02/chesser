@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/chesser/internal/db"
-	"github.com/chesser/internal/embeddings"
 	"github.com/chesser/internal/engine"
+	"github.com/chesser/internal/llm"
 	"github.com/chesser/internal/models"
 	"github.com/chesser/internal/summary"
 	"github.com/notnil/chess/uci"
@@ -19,7 +19,7 @@ type Worker struct {
 	id              int
 	engine          *uci.Engine
 	db              *db.DB
-	embeddingClient *embeddings.Client
+	embeddingClient llm.Embedder
 	username        string
 }
 
@@ -32,7 +32,7 @@ func (w *Worker) ProcessGame(ctx context.Context, game models.Game) error {
 	summaryData := summary.ExtractSummaryData(&game, gameAnalysis, w.username)
 	gameSummary := summary.GenerateSummary(summaryData)
 
-	embedding, err := w.embeddingClient.GetEmbedding(gameSummary)
+	embedding, err := llm.EmbedOne(ctx, w.embeddingClient, gameSummary)
 	if err != nil {
 		return fmt.Errorf("embedding failed: %w", err)
 	}
@@ -97,11 +97,11 @@ func (w *Worker) ProcessGame(ctx context.Context, game models.Game) error {
 type WorkerPool struct {
 	numWorkers      int
 	db              *db.DB
-	embeddingClient *embeddings.Client
+	embeddingClient llm.Embedder
 	username        string
 }
 
-func NewWorkerPool(numWorkers int, database *db.DB, embClient *embeddings.Client, username string) *WorkerPool {
+func NewWorkerPool(numWorkers int, database *db.DB, embClient llm.Embedder, username string) *WorkerPool {
 	return &WorkerPool{
 		numWorkers:      numWorkers,
 		db:              database,
@@ -109,7 +109,6 @@ func NewWorkerPool(numWorkers int, database *db.DB, embClient *embeddings.Client
 		username:        username,
 	}
 }
-
 
 func (wp *WorkerPool) Process(ctx context.Context, games []models.Game) error {
 	if len(games) == 0 {
@@ -142,7 +141,7 @@ func (wp *WorkerPool) Process(ctx context.Context, games []models.Game) error {
 			if err != nil {
 				select {
 				case errChan <- fmt.Errorf("worker %d: failed to start engine: %w", workerID, err):
-					cancel() 
+					cancel()
 				default:
 				}
 				return
@@ -168,7 +167,7 @@ func (wp *WorkerPool) Process(ctx context.Context, games []models.Game) error {
 				if err != nil {
 					select {
 					case errChan <- fmt.Errorf("worker %d: game %s: %w", workerID, game.UUID, err):
-						cancel() 
+						cancel()
 					default:
 					}
 					return
@@ -200,4 +199,3 @@ func (wp *WorkerPool) Process(ctx context.Context, games []models.Game) error {
 		return nil
 	}
 }
-

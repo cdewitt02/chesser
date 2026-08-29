@@ -72,6 +72,17 @@ CREATE INDEX IF NOT EXISTS idx_game_summaries_embedding
 ON game_summaries USING ivfflat (embedding vector_cosine_ops)
 WITH (lists = 100);
 
+-- Records which embedder produced the vectors in game_summaries. Two models of
+-- the same width occupy different vector spaces, so a width check alone would
+-- pass while retrieval silently degraded.
+CREATE TABLE IF NOT EXISTS index_meta (
+    id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    embed_provider TEXT NOT NULL,
+    embed_model TEXT NOT NULL,
+    dimensions INT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS player_stats (
     username TEXT PRIMARY KEY,
     total_games INTEGER DEFAULT 0,

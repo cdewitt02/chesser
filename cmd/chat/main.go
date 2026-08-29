@@ -10,37 +10,44 @@ import (
 	"syscall"
 
 	"github.com/chesser/internal/chat"
+	"github.com/chesser/internal/config"
 	"github.com/chesser/internal/db"
-	"github.com/chesser/internal/embeddings"
 )
 
 const (
-	defaultChatModel  = "llama3.2"
-	defaultOllamaURL  = "http://localhost:11434"
-	defaultEmbedModel = "nomic-embed-text"
-	defaultNumSimilar = 100 //number of games to retrieve for context
-	defaultDetailLimit = 10 //number of most relevant games to show in the response
+	defaultNumSimilar  = 100 //number of games to retrieve for context
+	defaultDetailLimit = 10  //number of most relevant games to show in the response
 )
+
+func printUsage() {
+	fmt.Println("Usage: go run cmd/chat/main.go <username> [chat-model]")
+	fmt.Println()
+	fmt.Println("Arguments:")
+	fmt.Println("  username    Chess.com username to filter games")
+	fmt.Println("  chat-model  Chat model for the selected CHAT_PROVIDER.")
+	fmt.Println("              Overrides CHAT_MODEL, so pass a model the provider actually offers.")
+	fmt.Println()
+	fmt.Println("Environment variables:")
+	fmt.Println("  DATABASE_URL       PostgreSQL connection string (required)")
+	fmt.Println("  CHAT_PROVIDER      ollama | anthropic (default: ollama)")
+	fmt.Println("  CHAT_MODEL         Chat model (default: per provider)")
+	fmt.Println("  EMBED_PROVIDER     ollama (default: ollama; Anthropic has no embeddings API)")
+	fmt.Println("  EMBED_MODEL        Embedding model, must be 768-dimension (default: nomic-embed-text)")
+	fmt.Println("  ANTHROPIC_API_KEY  Required when CHAT_PROVIDER=anthropic")
+	fmt.Println("  OLLAMA_URL         Ollama server URL (default: http://localhost:11434)")
+	fmt.Println("  OLLAMA_EMBED_MODEL Alias for EMBED_MODEL when EMBED_PROVIDER=ollama")
+}
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run cmd/chat/main.go <username> [chat-model]")
-		fmt.Println()
-		fmt.Println("Arguments:")
-		fmt.Println("  username    Chess.com username to filter games")
-		fmt.Println("  chat-model  Ollama model for chat (default: llama3.2)")
-		fmt.Println()
-		fmt.Println("Environment variables:")
-		fmt.Println("  DATABASE_URL       PostgreSQL connection string (required)")
-		fmt.Println("  OLLAMA_URL         Ollama server URL (default: http://localhost:11434)")
-		fmt.Println("  OLLAMA_EMBED_MODEL Embedding model (default: nomic-embed-text)")
+		printUsage()
 		os.Exit(1)
 	}
 
 	username := os.Args[1]
-	chatModel := defaultChatModel
+	chatModelArg := ""
 	if len(os.Args) >= 3 {
-		chatModel = os.Args[2]
+		chatModelArg = os.Args[2]
 	}
 
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -49,14 +56,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	ollamaURL := os.Getenv("OLLAMA_URL")
-	if ollamaURL == "" {
-		ollamaURL = defaultOllamaURL
-	}
-
-	embedModel := os.Getenv("OLLAMA_EMBED_MODEL")
-	if embedModel == "" {
-		embedModel = defaultEmbedModel
+	// Resolve providers and credentials before the welcome banner, so an auth
+	// or model failure is never revealed only after the first question.
+	cfg, err := config.Resolve(config.OSEnv, chatModelArg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -80,12 +85,30 @@ func main() {
 	}
 	defer database.Close()
 
-	// Create Ollama client (used for both embeddings and chat)
-	ollamaClient := embeddings.New(ollamaURL, embedModel)
+	chatModel, err := cfg.NewChatModel()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	embedder, err := cfg.NewEmbedder()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := config.Preflight(ctx, os.Stderr, chatModel, embedder); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	// Chat only reads the index, so it never adopts an unstamped one.
+	if err := config.CheckIndex(ctx, database, embedder, false, os.Stderr); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Create chat service
-	chatService := chat.NewService(database, ollamaClient, chat.Config{
-		ChatModel:   chatModel,
+	chatService := chat.NewService(database, chatModel, embedder, chat.Config{
+		ChatModel:   cfg.ChatModel,
 		Username:    username,
 		NumSimilar:  defaultNumSimilar,
 		DetailLimit: defaultDetailLimit,
@@ -94,7 +117,7 @@ func main() {
 	fmt.Println("Chess Coach Chat")
 	fmt.Println("================")
 	fmt.Printf("Analyzing games for: %s\n", username)
-	fmt.Printf("Using model: %s\n", chatModel)
+	fmt.Println(cfg.Summary())
 	fmt.Println()
 	fmt.Println("Ask questions about your chess games.")
 	fmt.Println("Commands: /clear (reset conversation), exit/quit (leave)")
@@ -127,6 +150,9 @@ func main() {
 		fmt.Println("Thinking...")
 		response, err := chatService.Ask(ctx, input)
 		if err != nil {
+			// Fail loudly. There is deliberately no fallback to another
+			// provider: silently answering from a different model is the exact
+			// confusion this feature exists to prevent.
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			continue
 		}

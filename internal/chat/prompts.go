@@ -16,15 +16,15 @@ func NewPromptBuilder(username string) *PromptBuilder {
 }
 
 type gameStats struct {
-	totalGames      int
-	wins            int
-	losses          int
-	draws           int
-	asWhite         int
-	asBlack         int
-	openings        map[string]int
-	weakestPhases   map[string]int
-	patterns        map[string]int
+	totalGames    int
+	wins          int
+	losses        int
+	draws         int
+	asWhite       int
+	asBlack       int
+	openings      map[string]int
+	weakestPhases map[string]int
+	patterns      map[string]int
 }
 
 func (p *PromptBuilder) BuildSystemPrompt(games []*db.SimilarGameResult, detailLimit int) string {
@@ -153,26 +153,4 @@ func aggregateGameStats(games []*db.SimilarGameResult) gameStats {
 	}
 
 	return stats
-}
-
-func (p *PromptBuilder) BuildFollowUpPrompt() string {
-	return fmt.Sprintf(
-		"Continue as the chess coach for %s. "+
-			"Refer to the previously discussed game data and patterns when relevant. "+
-			"Remember: only discuss chess-related topics, and base analysis on the player's actual game data. "+
-			"Maintain the same helpful, insightful tone.",
-		p.username,
-	)
-}
-
-func (p *PromptBuilder) WrapUserQuestion(question string) string {
-	return fmt.Sprintf(
-		"[IMPORTANT: You are a chess coach for %s. "+
-			"Only discuss chess and this player's games. "+
-			"Base all analysis on the game data provided in the system message. "+
-			"If this question is not about chess, politely decline and redirect to chess topics.]\n\n"+
-			"User question: %s",
-		p.username,
-		question,
-	)
 }

@@ -9,8 +9,9 @@ import (
 	"time"
 
 	"github.com/chesser/internal/api"
+	"github.com/chesser/internal/config"
 	"github.com/chesser/internal/db"
-	"github.com/chesser/internal/embeddings"
+	"github.com/chesser/internal/llm"
 	"github.com/chesser/internal/models"
 )
 
@@ -125,6 +126,8 @@ func main() {
 		runAnalyze()
 	case "refresh-stats":
 		runRefreshStats()
+	case "reembed":
+		runReembed()
 	default:
 		printUsage()
 		os.Exit(1)
@@ -135,6 +138,103 @@ func printUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  go run ./cmd/data analyze <username> <year> <month>  - Analyze games from Chess.com")
 	fmt.Println("  go run ./cmd/data refresh-stats <username>           - Refresh aggregate stats for a player")
+	fmt.Println("  go run ./cmd/data reembed                            - Rebuild embeddings from stored summaries")
+	fmt.Println()
+	fmt.Println("Environment variables:")
+	fmt.Println("  DATABASE_URL       PostgreSQL connection string (required)")
+	fmt.Println("  EMBED_PROVIDER     ollama (default: ollama)")
+	fmt.Println("  EMBED_MODEL        Embedding model, must be 768-dimension (default: nomic-embed-text)")
+	fmt.Println("  OLLAMA_URL         Ollama server URL (default: http://localhost:11434)")
+	fmt.Println("  OLLAMA_EMBED_MODEL Alias for EMBED_MODEL when EMBED_PROVIDER=ollama")
+	fmt.Println("  NUM_WORKERS        Analysis worker goroutines (default: 4)")
+}
+
+// newEmbedder resolves the embedding provider from the same shared config that
+// cmd/chat uses. This entrypoint used to hardcode the Ollama endpoint and
+// model, which meant a provider chosen for chat left ingestion silently on a
+// different model than the one that built the index.
+func newEmbedder(ctx context.Context, database *db.DB) (llm.Embedder, error) {
+	cfg, err := config.Resolve(config.OSEnv, "")
+	if err != nil {
+		return nil, err
+	}
+	embedder, err := cfg.NewEmbedder()
+	if err != nil {
+		return nil, err
+	}
+	if err := config.Preflight(ctx, os.Stderr, embedder); err != nil {
+		return nil, err
+	}
+	// Ingestion writes the index, so it adopts an unstamped one.
+	if err := config.CheckIndex(ctx, database, embedder, true, os.Stderr); err != nil {
+		return nil, err
+	}
+	fmt.Printf("Embeddings: %s / %s\n", embedder.Name(), embedder.Model())
+	return embedder, nil
+}
+
+// runReembed rebuilds every vector from the stored summary text. Summaries are
+// generated deterministically with no LLM and no Stockfish, so switching
+// embedding models is a bounded re-embed pass rather than a re-analysis.
+func runReembed() {
+	ctx := context.Background()
+
+	database, err := db.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Fatalf("Failed to create database: %v", err)
+	}
+	defer database.Close()
+
+	if err := database.Migrate(ctx); err != nil {
+		log.Fatalf("Failed to migrate database: %v", err)
+	}
+
+	cfg, err := config.Resolve(config.OSEnv, "")
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	embedder, err := cfg.NewEmbedder()
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	if err := config.Preflight(ctx, os.Stderr, embedder); err != nil {
+		log.Fatalf("%v", err)
+	}
+
+	rows, err := database.AllSummaryTexts(ctx)
+	if err != nil {
+		log.Fatalf("Failed to read summaries: %v", err)
+	}
+	if len(rows) == 0 {
+		fmt.Println("No stored summaries to re-embed.")
+		return
+	}
+
+	fmt.Printf("Re-embedding %d summaries with %s / %s...\n", len(rows), embedder.Name(), embedder.Model())
+	start := time.Now()
+
+	for i, row := range rows {
+		vec, err := llm.EmbedOne(ctx, embedder, row.SummaryText)
+		if err != nil {
+			log.Fatalf("Failed to embed %s: %v", row.GameUUID, err)
+		}
+		if err := database.UpdateSummaryEmbedding(ctx, row.GameUUID, vec); err != nil {
+			log.Fatalf("%v", err)
+		}
+		if (i+1)%25 == 0 || i+1 == len(rows) {
+			fmt.Printf("[%d/%d]\n", i+1, len(rows))
+		}
+	}
+
+	if err := database.SetIndexMeta(ctx, &db.IndexMeta{
+		EmbedProvider: embedder.Name(),
+		EmbedModel:    embedder.Model(),
+		Dimensions:    embedder.Dimensions(),
+	}); err != nil {
+		log.Fatalf("%v", err)
+	}
+
+	fmt.Printf("Re-embedded %d summaries in %s\n", len(rows), time.Since(start).Round(time.Millisecond))
 }
 
 func runRefreshStats() {
@@ -166,14 +266,14 @@ func runRefreshStats() {
 	elapsed := time.Since(start)
 	fmt.Printf("Stats refreshed in %s\n", elapsed.Round(time.Millisecond))
 	fmt.Printf("\nPlayer: %s\n", stats.Username)
-	fmt.Printf("Total Games: %d (W: %d, L: %d, D: %d)\n", 
+	fmt.Printf("Total Games: %d (W: %d, L: %d, D: %d)\n",
 		stats.TotalGames, stats.Wins, stats.Losses, stats.Draws)
 	fmt.Printf("Average CPL: %.1f\n", stats.AvgCPL)
-	
+
 	if len(stats.StatsByColor) > 0 {
 		fmt.Println("\nBy Color:")
 		for color, s := range stats.StatsByColor {
-			fmt.Printf("  %s: %d games, %.1f%% win rate, %.1f avg CPL\n", 
+			fmt.Printf("  %s: %d games, %.1f%% win rate, %.1f avg CPL\n",
 				color, s.Games, s.WinRate, s.AvgCPL)
 		}
 	}
@@ -181,7 +281,7 @@ func runRefreshStats() {
 	if len(stats.StatsByTimeClass) > 0 {
 		fmt.Println("\nBy Time Class:")
 		for tc, s := range stats.StatsByTimeClass {
-			fmt.Printf("  %s: %d games, %.1f%% win rate, %.1f avg CPL\n", 
+			fmt.Printf("  %s: %d games, %.1f%% win rate, %.1f avg CPL\n",
 				tc, s.Games, s.WinRate, s.AvgCPL)
 		}
 	}
@@ -248,7 +348,10 @@ func runAnalyze() {
 	fmt.Printf("%d new games to analyze\n", len(gamesToAnalyze))
 
 	// Initialize embedding client (shared across workers)
-	embeddingClient := embeddings.New("http://localhost:11434", "nomic-embed-text")
+	embeddingClient, err := newEmbedder(context.Background(), database)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
 
 	// Create and run worker pool
 	numWorkers := getNumWorkers()
@@ -274,7 +377,7 @@ func runAnalyze() {
 		log.Printf("Warning: Failed to refresh stats: %v", err)
 	} else {
 		fmt.Printf("Stats updated: %d total games, %.1f%% win rate\n",
-			stats.TotalGames, 
+			stats.TotalGames,
 			float64(stats.Wins)/float64(stats.TotalGames)*100)
 	}
 }
