@@ -47,3 +47,4 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 dist/
+testdata/golden/analysis.json

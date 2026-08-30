@@ -15,6 +15,7 @@ port can be **diffed** against it rather than trusted
 | Corpus fingerprint | `db9ac094e998b68b` |
 | Game count | 74 |
 | Embedder at capture | `ollama` / `nomic-embed-text` |
+| Stockfish at capture | **Stockfish 16** — `analysis.json` only |
 
 Any behavior change after that commit invalidates these files and forces a
 deliberate recapture. **A golden regenerated from the current tree always matches
@@ -33,6 +34,7 @@ Verified: three consecutive captures produce byte-identical output.
 | `eval_helpers.json` | Pure arithmetic over a fixed grid | **Yes** — no corpus involved |
 | `classification.json`, `parsing.json` | Pure functions over a fixed question set | **Yes** |
 | `summaries.json` | Keyed per game UUID | **Yes** — each game's values depend only on that game |
+| `analysis.json` | Five games, re-analyzed | Yes, but **only for one Stockfish build** — see below |
 | `prompts/` | Whole-corpus | **No** — every added game shifts win rates, CPL averages, and the comparison strings built from them |
 
 `prompts/manifest.json` carries the corpus fingerprint. The harness compares
@@ -42,21 +44,38 @@ bug.
 
 ## What is and is not committed
 
+### `analysis.json` is keyed to a Stockfish version, not to a commit
+
+The stored `moves` rows are **not reproducible**. They were written by a different Stockfish build, and
+the Go tree at this commit does not reproduce them either: on the two shortest games, 12 of 12 and 17 of
+17 evaluations differ, and 3 of 17 classifications. So "does the port match the corpus?" is not a
+question any implementation can answer.
+
+`analysis.json` answers the question that can be: it records what **Go** produced from the five shortest
+games with the engine on PATH at capture time. Matching it means new rows from Python are
+interchangeable with new rows from Go, which is what the port is actually on the hook for.
+
+Two fields do survive an engine change and are still checked against the live corpus — `played_move` and
+`fen_before` come from PGN parsing and board replay, not from Stockfish.
+
+If your Stockfish differs from the one above, that one test will fail and it is not a port regression.
+Recapture, or skip it.
+
 **Committed:** `eval_helpers.json`, `classification.json`, `parsing.json`. These
 are corpus-independent — a grid of integers and a fixed question set — so they
 are portable, reviewable, and are the regression suite `internal/engine`,
 `internal/chat`, and `internal/search` have never had.
 
-**Gitignored:** `summaries.json` and `prompts/`. Both are derived from one
-person's real corpus, and both embed **other players' Chess.com usernames**:
-Chess.com's termination strings are of the form `"Bolzman0 won by resignation"`,
-so a single assembled prompt carries 31 third-party handles. That is
-[readiness P0-8](../../docs/opensource-readiness/01-roadmap.md) — a live
-disclosure problem in the prompt path — and committing the capture would move it
-from *sent to a provider* to *published in a repository*.
+**Gitignored:** `summaries.json`, `analysis.json`, and `prompts/`. All three derive from one person's
+real corpus, and the first two embed **other players' Chess.com usernames**: Chess.com's termination
+strings are of the form `"Bolzman0 won by resignation"`, so a single assembled prompt carries 31
+third-party handles. That is [readiness P0-8](../../docs/opensource-readiness/01-roadmap.md) — a live
+disclosure problem in the prompt path — and committing the capture would move it from *sent to a
+provider* to *published in a repository*. `analysis.json` is excluded for the separate reason above:
+it is valid only for one Stockfish build, so a committed copy would fail on most machines.
 
-They are regenerated locally from the database in seconds, which is the whole
-point: the database is the source of truth, and it is language-neutral.
+They are regenerated locally from the database in seconds, which is the whole point: the database is the
+source of truth, and it is language-neutral.
 
 ## Note on `parsing.json`
 

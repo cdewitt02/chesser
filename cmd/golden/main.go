@@ -53,6 +53,10 @@ const (
 	detailLimit = 10
 )
 
+// analysisDepth mirrors cmd/data's ANALYSIS_DEPTH. It is frozen for the
+// duration of the rewrite: changing it rewrites every cpl and classification.
+const analysisDepth = 12
+
 func main() {
 	if len(os.Args) != 2 {
 		fmt.Fprintln(os.Stderr, "usage: go run ./cmd/golden <username>")
@@ -81,6 +85,11 @@ func main() {
 		log.Fatalf("eval helpers: %v", err)
 	}
 	fmt.Println("wrote eval_helpers.json")
+
+	if err := captureAnalysis(ctx, database); err != nil {
+		log.Fatalf("analysis: %v", err)
+	}
+	fmt.Println("wrote analysis.json")
 
 	if err := captureSummaries(ctx, database, username); err != nil {
 		log.Fatalf("summaries: %v", err)
@@ -182,6 +191,107 @@ func captureEvalHelpers() error {
 		}
 	}
 	return writeJSON("eval_helpers.json", cases)
+}
+
+// ---------- engine re-analysis ----------
+
+type analysisGolden struct {
+	GameUUID string         `json:"game_uuid"`
+	Moves    []analysisMove `json:"moves"`
+}
+
+type analysisMove struct {
+	PlayedMove     string `json:"played_move"`
+	BestMove       string `json:"best_move"`
+	Evaluation     int    `json:"evaluation"`
+	IsMate         bool   `json:"is_mate"`
+	MateIn         int    `json:"mate_in"`
+	CPL            int    `json:"cpl"`
+	Classification string `json:"classification"`
+	FENBefore      string `json:"fen_before"`
+}
+
+// analysisGames caps how many games are re-analyzed. Two Stockfish searches per
+// move at depth 12 means the whole corpus takes many minutes; the shortest five
+// are enough to catch a systematic arithmetic error, which is the only kind the
+// port can have. A per-move bug shows up on the first game.
+const analysisGames = 5
+
+// captureAnalysis re-runs AnalyzeGame over a few stored games with the engine
+// that is on PATH *now*, and records what it produced.
+//
+// This exists because the stored `moves` rows are **not** reproducible: they
+// were written by a different Stockfish build, and the current Go tree diverges
+// from them on every evaluation (verified 2026-08-29 — 12 of 12 and 17 of 17
+// evaluations differ on the two shortest games, and 3 of 17 classifications).
+// So "does Python match the database?" is unanswerable, and the question that
+// can be answered — and is the one the port is actually on the hook for — is
+// "does Python match Go, given the same engine?"
+//
+// Consequence: this golden is only valid for the Stockfish version that
+// produced it. That version is recorded in MANIFEST.md, and this is the one
+// golden that a machine with a different engine cannot check.
+func captureAnalysis(ctx context.Context, database *db.DB) error {
+	rows, err := database.Pool().Query(ctx, `
+		SELECT g.uuid::text, g.pgn
+		FROM games g
+		JOIN moves m ON m.game_uuid = g.uuid
+		GROUP BY g.uuid, g.pgn
+		ORDER BY COUNT(*) ASC, g.uuid ASC
+		LIMIT $1`, analysisGames)
+	if err != nil {
+		return err
+	}
+	type gameRow struct{ uuid, pgn string }
+	var games []gameRow
+	for rows.Next() {
+		var g gameRow
+		if err := rows.Scan(&g.uuid, &g.pgn); err != nil {
+			rows.Close()
+			return err
+		}
+		games = append(games, g)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	eng, err := engine.StartEngine()
+	if err != nil {
+		return fmt.Errorf("start stockfish: %w", err)
+	}
+	defer engine.StopEngine(eng)
+
+	out := make([]analysisGolden, 0, len(games))
+	for _, g := range games {
+		analyses, err := engine.AnalyzeGame(eng, g.pgn, analysisDepth)
+		if err != nil {
+			return fmt.Errorf("analyze %s: %w", g.uuid, err)
+		}
+		moves := make([]analysisMove, 0, len(analyses))
+		for _, a := range analyses {
+			best, played := "", ""
+			if a.BestMove != nil {
+				best = a.BestMove.String()
+			}
+			if a.PlayedMove != nil {
+				played = a.PlayedMove.String()
+			}
+			moves = append(moves, analysisMove{
+				PlayedMove:     played,
+				BestMove:       best,
+				Evaluation:     a.Evaluation,
+				IsMate:         a.IsMate,
+				MateIn:         a.MateIn,
+				CPL:            a.CentipawnLoss,
+				Classification: a.Classification,
+				FENBefore:      a.FENBefore,
+			})
+		}
+		out = append(out, analysisGolden{GameUUID: g.uuid, Moves: moves})
+	}
+	return writeJSON("analysis.json", out)
 }
 
 // ---------- summaries ----------

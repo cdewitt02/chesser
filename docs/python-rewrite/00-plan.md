@@ -126,9 +126,24 @@ eval-comparability defect unfixed.
 | # | Site | Defect | Reached on current corpus? |
 |---|---|---|---|
 | 1 | `internal/summary/generator.go:189` (`weakestPhase`) | `"Endgame was weakest"` is the `else` catch-all, so any *tie* between phase averages is misreported as an endgame weakness | No — 0 of 74 games |
+| 2 | `internal/summary/generator.go:52-60` (`ExtractSummaryData`) | **A drawn game is summarized as a loss.** `GameResult()` returns `"draw"`, never `""`, so the `drew` branch is dead and every draw falls through to `lost` | **Yes — 5 of 74 games** |
+
+**Defect 2, found during Phase 3.** It is the more serious of the two, because unlike #1 it is
+*reached*: it is visible in the Game Summaries, in the embeddings built from them, in the win/loss/draw
+tallies `prompts.go` derives by reading summary text, and it makes four of `detectPattern`'s ten
+verdicts unreachable. Preserved exactly regardless — fixing it changes the summary text, which changes
+the embedded text, which makes every stored vector stale relative to its own source. Its Phase 8 entry
+carries the same regeneration pass #1 does.
+
+Note `player_stats.draws` is computed independently in SQL and is *correct*; only the summary text is
+wrong. The prompt therefore states an accurate draw count in one section and an inaccurate one in any
+section derived from summaries.
 
 **Already fixed rather than preserved**, under carve-out 2: seven non-deterministic map iterations in
-`internal/chat/router.go` (see Phase 0). They could not have been ported.
+`internal/chat/router.go` (see Phase 0), plus four in `internal/search/parser.go` found while writing
+the capture. The parser sites matter for the same reason: the keyword loops take the first match and
+stop, so a query matching two keywords in one map resolved differently between runs, and that reaches
+retrieval and therefore the prompt. They could not have been ported.
 
 Add rows as the port surfaces them. An empty row is a claim that the package was clean; make it
 deliberately.
@@ -344,12 +359,28 @@ ingestion.
 
 **Verification.** The Phase 0 goldens, byte for byte. A summary that differs by one space is a failure,
 not a nit — it means the stored embedding no longer corresponds to its text. Additionally: re-analyze a
-handful of already-stored games with the Python engine and diff the `moves` rows — `cpl`,
-`classification`, `evaluation`, `best_move` must be identical.
+handful of games with the Python engine and diff the `moves` rows — `cpl`, `classification`,
+`evaluation`, `best_move` must be identical.
 
-**Note.** Stockfish at a fixed depth on a fixed position is deterministic, so "identical" is a reasonable
-bar rather than an aspirational one. If it cannot be met, the cause is in the ported arithmetic and it
-must be found here, not later.
+**Amended 2026-08-29: that diff is against Go's output, not against the database.** The stored `moves`
+rows were written by a Stockfish build that is no longer the one on PATH, and **the current Go tree does
+not reproduce them either** — on the two shortest games, 12 of 12 and 17 of 17 evaluations differ, along
+with 3 of 17 classifications. So "does Python match the corpus?" has no answer for any implementation,
+and the question the port is actually on the hook for is "does Python match Go, given the same engine?"
+That is what decides whether new rows from Python are interchangeable with new rows from Go.
+
+Phase 0 therefore also captures `analysis.json`: Go's re-analysis of the five shortest games at the
+capture commit. It is the one golden keyed to a *Stockfish version* rather than to a commit, and the
+version is recorded in the manifest.
+
+Two fields survive the version change and are still checked against the live corpus: `played_move` and
+`fen_before` come from PGN parsing and board replay, not from the engine. That check earned its keep —
+it caught python-chess's `fen()` defaulting to `en_passant="legal"`, which omits the en-passant square
+unless a capture is available, where Go prints it after any double pawn push.
+
+**Note.** Stockfish at a fixed depth on a fixed position is deterministic *for a given build*, so
+"identical" is a reasonable bar rather than an aspirational one. If it cannot be met, the cause is in
+the ported arithmetic and it must be found here, not later.
 
 ### Float inventory (audited 2026-08-29)
 
