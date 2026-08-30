@@ -1,0 +1,202 @@
+[
+  {
+    "question": "What's my average centipawn loss?",
+    "query_type": "aggregate",
+    "mentioned_openings": []
+  },
+  {
+    "question": "How many games have I played and what's my win rate?",
+    "query_type": "aggregate",
+    "mentioned_openings": []
+  },
+  {
+    "question": "Am I better with white or black?",
+    "query_type": "comparative",
+    "mentioned_openings": []
+  },
+  {
+    "question": "Which time control is my best?",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "Show me games where I threw a winning position",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "What openings do I lose with most often?",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "What should I study to improve fastest?",
+    "query_type": "recommendation",
+    "mentioned_openings": []
+  },
+  {
+    "question": "What's my biggest weakness?",
+    "query_type": "recommendation",
+    "mentioned_openings": []
+  },
+  {
+    "question": "Have I improved over the last month?",
+    "query_type": "trend",
+    "mentioned_openings": []
+  },
+  {
+    "question": "Is my accuracy getting better or worse?",
+    "query_type": "trend",
+    "mentioned_openings": []
+  },
+  {
+    "question": "What's a good recipe for risotto?",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "How would I do against Magnus Carlsen?",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "my losses",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "games I won",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "show me draws",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "my games as black",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "playing white",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "my Sicilian games",
+    "query_type": "specific_games",
+    "mentioned_openings": [
+      "sicilian"
+    ]
+  },
+  {
+    "question": "how do I play the King's Indian?",
+    "query_type": "specific_games",
+    "mentioned_openings": [
+      "king's indian"
+    ]
+  },
+  {
+    "question": "French Defense analysis",
+    "query_type": "specific_games",
+    "mentioned_openings": [
+      "french"
+    ]
+  },
+  {
+    "question": "Caro-Kann games",
+    "query_type": "specific_games",
+    "mentioned_openings": [
+      "caro-kann"
+    ]
+  },
+  {
+    "question": "my blitz games",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "rapid time control",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "endgame problems",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "my middlegame tactics",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "games where I blundered",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "games without blunders",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "my games this week",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "recent games",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "Why do I keep losing in the Sicilian?",
+    "query_type": "specific_games",
+    "mentioned_openings": [
+      "sicilian"
+    ]
+  },
+  {
+    "question": "my blitz games as black",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "endgame losses",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "how can I improve?",
+    "query_type": "recommendation",
+    "mentioned_openings": []
+  },
+  {
+    "question": "analyze my play",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  },
+  {
+    "question": "Compare my B20 and C50 results",
+    "query_type": "comparative",
+    "mentioned_openings": [
+      "B20",
+      "C50"
+    ]
+  },
+  {
+    "question": "Am I getting better at the Queen's Gambit lately?",
+    "query_type": "trend",
+    "mentioned_openings": [
+      "queen's gambit"
+    ]
+  },
+  {
+    "question": "no blunders in my rapid wins as white",
+    "query_type": "specific_games",
+    "mentioned_openings": []
+  }
+]

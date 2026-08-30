@@ -32,3 +32,8 @@ go.work.sum
 
 .cursor/
 test_data/
+
+# Corpus-derived goldens. Regenerate with: go run ./cmd/golden <username>
+# They embed real opponent usernames — see testdata/golden/MANIFEST.md.
+testdata/golden/summaries.json
+testdata/golden/prompts/
