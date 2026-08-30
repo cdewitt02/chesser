@@ -4,7 +4,7 @@ A chess game analysis system that lets you chat with your Chess.com games using 
 
 ## Prerequisites
 
-- **Go 1.24+**
+- **Python 3.11+**
 - **PostgreSQL** with [pgvector](https://github.com/pgvector/pgvector) extension
 - **Ollama** running locally — needed unless you select a hosted provider for
   *both* chat and embeddings (see [Providers](#providers))
@@ -12,7 +12,19 @@ A chess game analysis system that lets you chat with your Chess.com games using 
 
 ## Quick Start
 
-### 1. Set up the database
+### 1. Install
+
+```bash
+uv tool install .          # or: pipx install .
+```
+
+For development, an editable install in a virtualenv:
+
+```bash
+uv venv && uv pip install -e ".[dev]"
+```
+
+### 2. Set up the database
 
 ```bash
 # Create database and enable pgvector
@@ -20,35 +32,41 @@ psql -c "CREATE DATABASE chesser;"
 psql -d chesser -c "CREATE EXTENSION vector;"
 ```
 
-### 2. Pull Ollama models
+`chesser data` creates the tables itself on first run, so this is only the
+database and the extension.
+
+### 3. Pull Ollama models
 
 ```bash
 ollama pull nomic-embed-text   # embeddings
 ollama pull llama3.2           # chat (or your preferred model)
 ```
 
-### 3. Set environment variables
+### 4. Set environment variables
 
 ```bash
 export DATABASE_URL="postgres://user:pass@localhost:5432/chesser"
 ```
 
-### 4. Fetch and analyze games
+### 5. Fetch and analyze games
 
 ```bash
-go run ./cmd/data analyze <username> <year> <month>
+chesser data analyze <username> <year> <month>
 
 # Example: analyze January 2026 games
-go run ./cmd/data analyze magnus 2026 01
+chesser data analyze magnus 2026 01
 ```
 
-### 5. Chat with your games
+The month keeps its leading zero. Expect roughly a second per game: every move
+is searched twice by Stockfish, which dominates the run.
+
+### 6. Chat with your games
 
 ```bash
-go run cmd/chat/main.go <username> [chat-model]
+chesser chat <username> [chat-model]
 
 # Example
-go run cmd/chat/main.go magnus llama3.2
+chesser chat magnus llama3.2
 ```
 
 The optional positional model is passed to whichever chat provider is selected,
@@ -73,7 +91,7 @@ alias would change answers with no code change and no way to notice.
 ```bash
 export ANTHROPIC_API_KEY="..."     # never committed; .env is gitignored
 export CHAT_PROVIDER=anthropic
-go run cmd/chat/main.go magnus
+chesser chat magnus
 ```
 
 Embeddings stay on Ollama, so **no re-embedding is needed** and the existing
@@ -84,6 +102,11 @@ half.
 **This sends data off-machine.** Selecting a hosted provider sends your game
 summaries and Chess.com username to a third party. The startup banner says so
 whenever a hosted provider is active.
+
+> **Known gap.** It also sends *other players'* usernames. Chess.com's
+> termination strings embed the opponent's handle ("Bolzman0 won by
+> resignation"), and those reach the prompt verbatim in the "Game endings"
+> section. See [readiness P0-8](docs/opensource-readiness/01-roadmap.md).
 
 Failures are reported, never silently retried on another provider: an Anthropic
 error answered from `llama3.2` would leave you comparing outputs without knowing
@@ -98,16 +121,15 @@ take Ollama off the prerequisite list entirely:
 export OPENAI_API_KEY="..."
 export CHAT_PROVIDER=openai
 export EMBED_PROVIDER=openai
-go run ./cmd/data analyze magnus 2026 01
-go run cmd/chat/main.go magnus
+chesser data analyze magnus 2026 01
+chesser chat magnus
 ```
 
 `text-embedding-3-small` is asked for **768 dimensions**, which is the width the
 `game_summaries` column already declares — so no schema migration is involved.
 It is still a *different* embedding model: vectors from two models are not
 comparable even at the same width, so switching embed providers on an existing
-index is refused at startup, naming the re-embed path
-(`go run ./cmd/data reembed`).
+index is refused at startup, naming the re-embed path (`chesser data reembed`).
 
 ## Environment Variables
 
@@ -120,7 +142,7 @@ index is refused at startup, naming the re-embed path
 | `EMBED_MODEL` | Embedding model — must emit **768 dimensions** | per provider |
 | `ANTHROPIC_API_KEY` | Required when `CHAT_PROVIDER=anthropic` | — |
 | `OPENAI_API_KEY` | Required when either provider is `openai` | — |
-| `OLLAMA_URL` | Ollama server URL (honored by both entrypoints) | `http://localhost:11434` |
+| `OLLAMA_URL` | Ollama server URL (honored by both subcommands) | `http://localhost:11434` |
 | `OLLAMA_EMBED_MODEL` | Alias for `EMBED_MODEL` when the embed provider is Ollama | `nomic-embed-text` |
 | `NUM_WORKERS` | Parallel analysis workers | `4` |
 | `NO_COLOR` | Set to any value to print raw markdown instead of styled output | — |
@@ -131,17 +153,16 @@ See `.env.example`.
 
 ### Terminal output
 
-The coach answers in markdown, and `cmd/chat` renders it in place: headings,
-bullets, tables, and fenced code blocks are styled to the terminal's width and
-light/dark background. The reply streams in as plain text while the model works,
-then is repainted once as the finished document — markdown cannot be laid out
-incrementally, because wrapping and table widths are properties of the whole
-answer.
+The coach answers in markdown, and `chesser chat` renders it in place: headings,
+bullets, tables, and fenced code blocks are styled to the terminal's width. The
+reply streams in as plain text while the model works, then is repainted once as
+the finished document — markdown cannot be laid out incrementally, because
+wrapping and table widths are properties of the whole answer.
 
 Styling is skipped, and the raw markdown printed instead, whenever stdout is not
 a terminal, `NO_COLOR` is set, or `TERM` reports a terminal that cannot render
-it. So `chat charlie > notes.md` captures clean markdown rather than escape
-codes.
+it. So `chesser chat magnus > notes.md` captures clean markdown rather than
+escape codes.
 
 ### Changing the embedding model
 
@@ -156,27 +177,35 @@ LLM and no Stockfish, so this reads stored text and updates vectors rather than
 re-running analysis.
 
 ```bash
-go run ./cmd/data reembed
+chesser data reembed
 ```
 
 ## Project Structure
 
 ```
-cmd/
-  chat/     # Interactive chat interface
-  data/     # Data ingestion and analysis pipeline
-internal/
-  api/      # Chess.com API client
-  chat/     # Chat service and prompts
-  config/   # Provider selection and startup validation
-  db/       # PostgreSQL/pgvector operations
-  engine/   # Stockfish UCI wrapper
-  llm/      # Provider-neutral chat and embedding interfaces
-    anthropic/ # Anthropic adapter (chat only)
-    llmtest/   # Fakes and the shared conformance suite
-    ollama/    # Ollama adapter (chat + embeddings)
-    openai/    # OpenAI adapter (chat + embeddings)
-  models/   # Domain types
-  search/   # Query parsing and filters
-  summary/  # Game summary generation
+chesser/
+  api.py       # Chess.com API client
+  cli.py       # The `chesser` command: data and chat subcommands
+  config.py    # Provider selection and startup validation
+  engine.py    # Stockfish analysis via python-chess
+  ingest.py    # The analysis worker pool
+  repl.py      # Terminal chat loop
+  summary.py   # Game Summary generation
+  chat/        # Query classification, prompt assembly, chat service
+  db/          # PostgreSQL/pgvector operations
+  llm/         # Provider-neutral chat and embedding protocols
+    anthropic.py # Anthropic adapter (chat only)
+    ollama.py    # Ollama adapter (chat + embeddings)
+    openai.py    # OpenAI adapter (chat + embeddings)
+  models/      # Domain types
+  search/      # Query parsing, filters, hybrid retrieval
+tests/
+testdata/golden/  # Parity reference — see its MANIFEST.md
+legacy/           # The superseded Go implementation; see ADR 0002
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: `ruff check`,
+`mypy --strict`, and `pytest` must all pass, and the corpus-backed tests need a
+database.

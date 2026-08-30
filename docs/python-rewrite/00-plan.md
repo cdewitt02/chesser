@@ -1,7 +1,10 @@
 # Python Rewrite — Phased Plan
 
 Plan for porting chesser from Go to Python without a flag day and without re-ingesting a single game.
-**This is a plan, not implementation.**
+
+> **Executed 2026-08-29. Phases 0–7 are done and this document is now a record rather than a proposal.**
+> The decision and what it actually cost are in [ADR 0002](../adr/0002-python-rewrite.md); the outcome of
+> each gate is noted inline below. Phase 8 is still outstanding and is the live part of this file.
 
 Each phase is independently reviewable and leaves a working artifact. Phases 0–5 change nothing a user
 can see, because the Go program remains the one that runs. The cutover is Phase 7, and it is reversible
@@ -527,9 +530,24 @@ what makes that safe.
   *after* Phase 7, as its own change with its own verification. Folding an optimization into a port
   means a diff that fails can no longer be attributed.
 - **Every entry in "Known preserved defects."** Each is fixed post-cutover as its own change with its
-  own verification. Note that fixing #1 makes the stored corpus internally inconsistent until summaries
-  are regenerated — which is cheap, since `ExtractSummaryData` needs only `games` and `moves`, both
-  stored, so no Stockfish re-analysis is involved. That regeneration pass is itself a Phase 8 item.
+  own verification. Fixing either makes the stored corpus internally inconsistent until summaries are
+  regenerated — which is cheap, since `ExtractSummaryData` needs only `games` and `moves`, both stored,
+  so no Stockfish re-analysis is involved. That regeneration pass is itself a Phase 8 item, and it must
+  be followed by `chesser data reembed`: the summary text *is* the embedded text.
+
+  **Defect 2 first.** It is reached on 5 of 74 games where #1 is reached on none, it corrupts the
+  win/loss/draw tallies `prompts.py` derives, and it makes four of `detectPattern`'s ten verdicts
+  unreachable — so fixing it changes more stored text than any other item here, and every later change
+  is cheaper once the regeneration pass has been done once.
+
+- **Regenerating the goldens as a Python-native harness**, once `legacy/` is deleted. Until then they
+  are captured by the Go tree, which is what makes them a cross-language reference; after, they need a
+  small Python capture tool. See `testdata/golden/MANIFEST.md`.
+
+- **[Readiness P0-8](../opensource-readiness/01-roadmap.md).** Deferred to *after* cutover under the
+  plan's own rule — a change to the Assembled Prompt lands before the capture or after the cutover,
+  never in between — and it is now the largest outstanding correctness-and-disclosure item. It is also
+  why two of the five goldens are gitignored.
 - **`ANALYSIS_DEPTH` as configuration**, **`NumSimilar`/`DetailLimit` token budgeting**, and the
   **unused Chess.com accuracy data** — same reasoning.
 - **Voyage adapter**, **tool calling**, **parameterized `vector(N)`** — unchanged from

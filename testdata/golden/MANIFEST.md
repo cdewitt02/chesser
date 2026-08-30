@@ -92,9 +92,18 @@ runs. That will stop being true once the corpus contains rows older than
 ## Regenerating
 
 ```sh
-. ./.env
-go run ./cmd/golden cdew4     # requires Postgres and, for prompts/, Ollama
+cd legacy && . ../.env && go run ./cmd/golden cdew4
 ```
+
+Requires Postgres, Stockfish (for `analysis.json`), and Ollama (for `prompts/`). It runs from `legacy/`
+because that is where the Go implementation lives after the cutover — see
+[ADR 0002](../../docs/adr/0002-python-rewrite.md).
+
+**When `legacy/` is deleted, these stop being a cross-language reference.** They become a
+Python-vs-Python regression suite frozen at the cutover, which is still worth having — it is the only
+coverage `summary`, `engine`, `chat`, and `search` have for their exact output — but from that point a
+diff means "the Python tree changed", not "the two implementations disagree". Regenerate with a small
+Python harness at that point, and say so here when you do.
 
 The capture also re-derives every summary from stored `games` and `moves` rows
 and compares it against the stored `summary_text`. A mismatch is reported loudly:

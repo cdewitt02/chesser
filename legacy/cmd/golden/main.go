@@ -41,9 +41,11 @@ import (
 	"github.com/cdewitt02/chesser/internal/summary"
 )
 
-// goldenDir is relative to the repository root, which is where this must be run
-// from.
-const goldenDir = "testdata/golden"
+// goldenDir is relative to this directory, so the tool writes into the
+// repository root's testdata/ from legacy/. Run it as:
+//
+//	cd legacy && . ../.env && go run ./cmd/golden <username>
+const goldenDir = "../testdata/golden"
 
 // detailLimit and numSimilar mirror cmd/chat's constants. The assembled prompt
 // depends on both, so capturing at different values would produce a reference
