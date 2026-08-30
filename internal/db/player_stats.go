@@ -199,6 +199,13 @@ func (db *DB) ComputePlayerStats(ctx context.Context, username string) (*models.
 			avg_cpl_white, avg_cpl_black
 		FROM games
 		WHERE white_username = $1 OR black_username = $1
+		-- Ordered because the dimensional averages below are computed with a
+		-- running mean, which is not associative in floating point: the same
+		-- games in a different order produce a value that differs in the last
+		-- ulp. Without this, two databases holding identical games report
+		-- different avg_cpl, and a Go/Python diff of the stats table shows a
+		-- difference that belongs to neither implementation.
+		ORDER BY uuid
 	`
 
 	rows, err := db.pool.Query(ctx, query, username)

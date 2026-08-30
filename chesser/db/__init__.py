@@ -132,21 +132,40 @@ class DB:
     def __init__(self, conn_string: str = "") -> None:
         if not conn_string:
             conn_string = os.environ.get("DATABASE_URL", "")
+        self._conn_string = conn_string
+        self._pool = self._open_pool()
 
+    def _open_pool(self) -> ConnectionPool[psycopg.Connection[Any]]:
         def configure(conn: psycopg.Connection[Any]) -> None:
             # pgvector's adapters are registered per connection, so this has to
             # be the pool's configure hook rather than a one-off call.
-            register_vector(conn)
+            #
+            # A brand-new database has no `vector` type yet — migrate() is what
+            # creates the extension — and registration against a missing type
+            # raises. Tolerating that is what lets DB() open at all on an empty
+            # database; migrate() reopens the pool afterwards so every
+            # connection ends up with the adapters. Swallowing it here would be
+            # wrong on a *migrated* database, which is why migrate() reopens
+            # rather than leaving it to chance.
+            try:
+                register_vector(conn)
+            except psycopg.ProgrammingError:
+                # "vector type not found in the database" — the extension is
+                # not installed yet. Any other ProgrammingError would be a real
+                # problem, but pgvector raises this bare type for both, so the
+                # narrow catch is not available.
+                conn.rollback()
 
-        self._pool = ConnectionPool(
-            conn_string,
+        pool: ConnectionPool[psycopg.Connection[Any]] = ConnectionPool(
+            self._conn_string,
             configure=configure,
             open=True,
             kwargs={"row_factory": tuple_row},
         )
         # Verify the connection now rather than at the first query, so a bad
         # DATABASE_URL is a startup error.
-        self._pool.wait(timeout=30)
+        pool.wait(timeout=30)
+        return pool
 
     def close(self) -> None:
         self._pool.close()
@@ -172,6 +191,12 @@ class DB:
         # query protocol when there are no parameters, which is what allows it.
         with self.cursor() as cur:
             cur.execute(SCHEMA)
+
+        # Reopen so every pooled connection registers the pgvector adapters.
+        # On a database that already had the extension this is a no-op in
+        # effect; on a fresh one it is what makes the first insert work.
+        old, self._pool = self._pool, self._open_pool()
+        old.close()
 
     # ---------- games ----------
 
@@ -617,11 +642,15 @@ class DB:
                     stats.losses,
                     stats.draws,
                     stats.avg_cpl,
-                    _dump({k: v.to_json() for k, v in stats.stats_by_color.items()}),
-                    _dump({k: v.to_json() for k, v in stats.stats_by_time_class.items()}),
-                    _dump({k: v.to_json() for k, v in stats.stats_by_opening.items()}),
-                    _dump({k: v.to_json() for k, v in stats.stats_by_rating_band.items()}),
-                    _dump(stats.stats_by_termination),
+                    _dump(_sorted_map({k: v.to_json() for k, v in stats.stats_by_color.items()})),
+                    _dump(
+                        _sorted_map({k: v.to_json() for k, v in stats.stats_by_time_class.items()})
+                    ),
+                    _dump(_sorted_map({k: v.to_json() for k, v in stats.stats_by_opening.items()})),
+                    _dump(
+                        _sorted_map({k: v.to_json() for k, v in stats.stats_by_rating_band.items()})
+                    ),
+                    _dump(_sorted_map(stats.stats_by_termination)),
                     _dump(stats.last_30_days.to_json() if stats.last_30_days else None),
                     _dump(stats.last_90_days.to_json() if stats.last_90_days else None),
                     stats.updated_at,
@@ -686,9 +715,22 @@ class DB:
                        white_rating, black_rating,
                        result, termination_type, time_class,
                        eco_code, eco_name,
-                       avg_cpl_white, avg_cpl_black
+                       -- ::float8 rather than the bare REAL columns. In text
+                       -- mode Postgres prints a float4 with float4 precision,
+                       -- so float() would land on a different double than the
+                       -- widened float32 pgx produced — and that difference
+                       -- propagates through the running mean into stored JSON.
+                       -- Widening server-side reproduces the Go read exactly.
+                       avg_cpl_white::float8, avg_cpl_black::float8
                    FROM games
-                   WHERE white_username = %s OR black_username = %s""",
+                   WHERE white_username = %s OR black_username = %s
+                   -- Ordered because the dimensional averages are computed
+                   -- with a running mean, which is not associative in floating
+                   -- point: the same games in a different order produce a
+                   -- value that differs in the last ulp. Verified — the Go
+                   -- tree produced different avg_cpl figures for identical
+                   -- games held in a different heap order.
+                   ORDER BY uuid""",
                 (username, username),
             )
             rows = cur.fetchall()
@@ -873,13 +915,44 @@ def _from_vector(value: Any) -> list[float]:
 
 
 def _dump(value: Any) -> str:
-    """Serialize to the JSON shape the Go tree wrote.
+    """Serialize to the byte-identical JSON the Go tree wrote.
 
-    `sort_keys` matters: Go's encoding/json emits map keys in sorted order, so
-    without it the same stats would round-trip to a byte-different column value
-    and a `git diff` of a dumped table would be noise.
+    Two of encoding/json's habits have to be reproduced, because these strings
+    are stored and a `git diff` of a dumped table would otherwise be noise:
+
+    - **Map keys are sorted; struct fields are not.** Go sorts only when
+      marshalling a map, and emits struct fields in declaration order. So the
+      outer dicts here — keyed by color, time class, ECO code, rating band —
+      are sorted by the caller, while each value's field order comes from its
+      `to_json`. Passing `sort_keys=True` would sort both and reorder every
+      inner object.
+    - **`<`, `>`, and `&` are escaped.** encoding/json HTML-escapes them by
+      default, which matters here because the "<1000" rating band is a map key.
     """
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    text = json.dumps(_go_floats(value), separators=(",", ":"))
+    return text.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+
+
+def _go_floats(value: Any) -> Any:
+    """Rewrite integral floats as ints, ahead of serialization.
+
+    Go's encoding/json emits an integral float64 without a fractional part —
+    `25`, where Python writes `25.0`. A win rate of exactly 25% is common, so
+    this is not an edge case. Rewriting the value is the reliable way to get
+    there: json's C encoder ignores a subclass's float handling.
+    """
+    if isinstance(value, dict):
+        return {k: _go_floats(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_go_floats(v) for v in value]
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def _sorted_map(values: dict[str, Any]) -> dict[str, Any]:
+    """Reorder a dict by key, so `_dump` reproduces Go's map ordering."""
+    return {key: values[key] for key in sorted(values)}
 
 
 def _load(raw: str | None) -> dict[str, Any]:
