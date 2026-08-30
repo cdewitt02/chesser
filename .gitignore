@@ -37,3 +37,13 @@ test_data/
 # They embed real opponent usernames — see testdata/golden/MANIFEST.md.
 testdata/golden/summaries.json
 testdata/golden/prompts/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
