@@ -2,9 +2,26 @@ package search
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
+
+// sortedKeys returns a map's keys in a stable order. Go randomizes map
+// iteration, and the keyword loops below take the *first* match and stop, so
+// ranging a map directly makes a query that matches two keywords in the same
+// map resolve differently between two identical runs. That reaches retrieval —
+// a different filter selects different games — and from there the assembled
+// prompt, which must be reproducible (docs/multi-provider/03-eval-plan.md) and
+// capturable as a golden. Mirrors the helper in internal/chat/router.go.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 // extracts structured filters from natural language queries
 // uses pattern matching to identify filterable criteria while preserving
@@ -31,7 +48,7 @@ type TimePattern struct {
 
 type ParseResult struct {
 	Filters          *GameFilters
-	SemanticQuery    string  
+	SemanticQuery    string
 	ExtractedFilters []string
 }
 
@@ -46,16 +63,16 @@ func NewQueryParser() *QueryParser {
 
 	p.openingPatterns = map[string]OpeningPattern{
 		// Sicilian variations (B20-B99)
-		"sicilian":       {ECOPrefix: "B", OpeningName: "Sicilian"},
+		"sicilian":         {ECOPrefix: "B", OpeningName: "Sicilian"},
 		"sicilian najdorf": {ECOPrefix: "B9", OpeningName: "Sicilian"},
-		"najdorf":        {ECOPrefix: "B9", OpeningName: "Najdorf"},
-		"dragon":         {ECOPrefix: "B7", OpeningName: "Dragon"},
-		"sicilian dragon": {ECOPrefix: "B7", OpeningName: "Dragon"},
+		"najdorf":          {ECOPrefix: "B9", OpeningName: "Najdorf"},
+		"dragon":           {ECOPrefix: "B7", OpeningName: "Dragon"},
+		"sicilian dragon":  {ECOPrefix: "B7", OpeningName: "Dragon"},
 
 		// King's Indian (E60-E99)
-		"king's indian":  {ECOPrefix: "E", OpeningName: "King's Indian"},
-		"kings indian":   {ECOPrefix: "E", OpeningName: "King's Indian"},
-		"kid":            {ECOPrefix: "E", OpeningName: "King's Indian"},
+		"king's indian": {ECOPrefix: "E", OpeningName: "King's Indian"},
+		"kings indian":  {ECOPrefix: "E", OpeningName: "King's Indian"},
+		"kid":           {ECOPrefix: "E", OpeningName: "King's Indian"},
 
 		// Queen's Gambit (D06-D69)
 		"queen's gambit": {ECOPrefix: "D", OpeningName: "Queen's Gambit"},
@@ -64,9 +81,9 @@ func NewQueryParser() *QueryParser {
 		"qga":            {ECOPrefix: "D", OpeningName: "Queen's Gambit Accepted"},
 
 		// Ruy Lopez (C60-C99)
-		"ruy lopez":      {ECOPrefix: "C6", OpeningName: "Ruy Lopez"},
-		"spanish":        {ECOPrefix: "C6", OpeningName: "Ruy Lopez"},
-		"spanish game":   {ECOPrefix: "C6", OpeningName: "Ruy Lopez"},
+		"ruy lopez":    {ECOPrefix: "C6", OpeningName: "Ruy Lopez"},
+		"spanish":      {ECOPrefix: "C6", OpeningName: "Ruy Lopez"},
+		"spanish game": {ECOPrefix: "C6", OpeningName: "Ruy Lopez"},
 
 		// French Defense (C00-C19)
 		"french":         {ECOPrefix: "C0", OpeningName: "French"},
@@ -74,58 +91,58 @@ func NewQueryParser() *QueryParser {
 		"french defence": {ECOPrefix: "C0", OpeningName: "French"},
 
 		// Caro-Kann (B10-B19)
-		"caro-kann":      {ECOPrefix: "B1", OpeningName: "Caro-Kann"},
-		"caro kann":      {ECOPrefix: "B1", OpeningName: "Caro-Kann"},
+		"caro-kann": {ECOPrefix: "B1", OpeningName: "Caro-Kann"},
+		"caro kann": {ECOPrefix: "B1", OpeningName: "Caro-Kann"},
 
 		// Italian Game (C50-C59)
-		"italian":        {ECOPrefix: "C5", OpeningName: "Italian"},
-		"italian game":   {ECOPrefix: "C5", OpeningName: "Italian"},
-		"giuoco piano":   {ECOPrefix: "C5", OpeningName: "Italian"},
+		"italian":      {ECOPrefix: "C5", OpeningName: "Italian"},
+		"italian game": {ECOPrefix: "C5", OpeningName: "Italian"},
+		"giuoco piano": {ECOPrefix: "C5", OpeningName: "Italian"},
 
 		// English Opening (A10-A39)
-		"english":        {ECOPrefix: "A1", OpeningName: "English"},
+		"english":         {ECOPrefix: "A1", OpeningName: "English"},
 		"english opening": {ECOPrefix: "A1", OpeningName: "English"},
 
 		// London System (D00)
-		"london":         {ECOPrefix: "D00", OpeningName: "London"},
-		"london system":  {ECOPrefix: "D00", OpeningName: "London"},
+		"london":        {ECOPrefix: "D00", OpeningName: "London"},
+		"london system": {ECOPrefix: "D00", OpeningName: "London"},
 
 		// Scandinavian (B01)
-		"scandinavian":   {ECOPrefix: "B01", OpeningName: "Scandinavian"},
+		"scandinavian": {ECOPrefix: "B01", OpeningName: "Scandinavian"},
 
 		// Pirc Defense (B07-B09)
-		"pirc":           {ECOPrefix: "B0", OpeningName: "Pirc"},
-		"pirc defense":   {ECOPrefix: "B0", OpeningName: "Pirc"},
+		"pirc":         {ECOPrefix: "B0", OpeningName: "Pirc"},
+		"pirc defense": {ECOPrefix: "B0", OpeningName: "Pirc"},
 
 		// Dutch Defense (A80-A99)
-		"dutch":          {ECOPrefix: "A8", OpeningName: "Dutch"},
-		"dutch defense":  {ECOPrefix: "A8", OpeningName: "Dutch"},
+		"dutch":         {ECOPrefix: "A8", OpeningName: "Dutch"},
+		"dutch defense": {ECOPrefix: "A8", OpeningName: "Dutch"},
 
 		// Nimzo-Indian (E20-E59)
-		"nimzo-indian":   {ECOPrefix: "E", OpeningName: "Nimzo-Indian"},
-		"nimzo indian":   {ECOPrefix: "E", OpeningName: "Nimzo-Indian"},
-		"nimzo":          {ECOPrefix: "E", OpeningName: "Nimzo-Indian"},
+		"nimzo-indian": {ECOPrefix: "E", OpeningName: "Nimzo-Indian"},
+		"nimzo indian": {ECOPrefix: "E", OpeningName: "Nimzo-Indian"},
+		"nimzo":        {ECOPrefix: "E", OpeningName: "Nimzo-Indian"},
 
 		// Grunfeld (D70-D99)
-		"grunfeld":       {ECOPrefix: "D7", OpeningName: "Grunfeld"},
-		"grünfeld":       {ECOPrefix: "D7", OpeningName: "Grunfeld"},
+		"grunfeld": {ECOPrefix: "D7", OpeningName: "Grunfeld"},
+		"grünfeld": {ECOPrefix: "D7", OpeningName: "Grunfeld"},
 	}
 
 	p.resultKeywords = map[string]string{
 		// Win
-		"win":     "win",
-		"wins":    "win",
-		"won":     "win",
-		"winning": "win",
-		"victory": "win",
+		"win":       "win",
+		"wins":      "win",
+		"won":       "win",
+		"winning":   "win",
+		"victory":   "win",
 		"victories": "win",
 
 		// Loss
-		"loss":   "loss",
-		"losses": "loss",
-		"lost":   "loss",
-		"losing": "loss",
-		"defeat": "loss",
+		"loss":    "loss",
+		"losses":  "loss",
+		"lost":    "loss",
+		"losing":  "loss",
+		"defeat":  "loss",
 		"defeats": "loss",
 
 		// Draw
@@ -138,14 +155,14 @@ func NewQueryParser() *QueryParser {
 
 	// Color keywords
 	p.colorKeywords = map[string]string{
-		"as white":    "white",
-		"with white":  "white",
+		"as white":      "white",
+		"with white":    "white",
 		"playing white": "white",
-		"white pieces": "white",
-		"as black":    "black",
-		"with black":  "black",
+		"white pieces":  "white",
+		"as black":      "black",
+		"with black":    "black",
 		"playing black": "black",
-		"black pieces": "black",
+		"black pieces":  "black",
 	}
 
 	// Time class keywords
@@ -159,14 +176,14 @@ func NewQueryParser() *QueryParser {
 
 	// Phase keywords
 	p.phaseKeywords = map[string]string{
-		"opening":    "opening",
-		"openings":   "opening",
-		"middlegame": "middlegame",
+		"opening":     "opening",
+		"openings":    "opening",
+		"middlegame":  "middlegame",
 		"middle game": "middlegame",
-		"midgame":    "middlegame",
-		"endgame":    "endgame",
-		"end game":   "endgame",
-		"endings":    "endgame",
+		"midgame":     "middlegame",
+		"endgame":     "endgame",
+		"end game":    "endgame",
+		"endings":     "endgame",
 	}
 
 	// Time patterns (for relative date filtering)
@@ -199,12 +216,14 @@ func (p *QueryParser) Parse(query string, username string) *ParseResult {
 		pattern OpeningPattern
 	}
 	var openingMatches []openingMatch
-	for keyword, pattern := range p.openingPatterns {
+	for _, keyword := range sortedKeys(p.openingPatterns) {
 		if strings.Contains(lowerQuery, keyword) {
-			openingMatches = append(openingMatches, openingMatch{keyword, pattern})
+			openingMatches = append(openingMatches, openingMatch{keyword, p.openingPatterns[keyword]})
 		}
 	}
-	// find the longest match
+	// find the longest match. Equal-length keywords resolve to the
+	// alphabetically first, because openingMatches is built in sorted order and
+	// the comparison is strictly greater-than.
 	if len(openingMatches) > 0 {
 		longest := openingMatches[0]
 		for _, m := range openingMatches {
@@ -219,7 +238,8 @@ func (p *QueryParser) Parse(query string, username string) *ParseResult {
 	}
 
 	// extract color keywords
-	for keyword, color := range p.colorKeywords {
+	for _, keyword := range sortedKeys(p.colorKeywords) {
+		color := p.colorKeywords[keyword]
 		if strings.Contains(lowerQuery, keyword) {
 			filters.UserColor = StringPtr(color)
 			extracted = append(extracted, "color: "+color)
@@ -229,7 +249,8 @@ func (p *QueryParser) Parse(query string, username string) *ParseResult {
 	}
 
 	// extract result keywords
-	for keyword, result := range p.resultKeywords {
+	for _, keyword := range sortedKeys(p.resultKeywords) {
+		result := p.resultKeywords[keyword]
 		pattern := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(keyword) + `\b`)
 		if pattern.MatchString(lowerQuery) {
 			filters.Result = StringPtr(result)
@@ -240,7 +261,8 @@ func (p *QueryParser) Parse(query string, username string) *ParseResult {
 	}
 
 	// extract time class keywords
-	for keyword, timeClass := range p.timeClassKeys {
+	for _, keyword := range sortedKeys(p.timeClassKeys) {
+		timeClass := p.timeClassKeys[keyword]
 		pattern := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(keyword) + `\b`)
 		if pattern.MatchString(lowerQuery) {
 			filters.TimeClass = StringPtr(timeClass)
@@ -251,7 +273,8 @@ func (p *QueryParser) Parse(query string, username string) *ParseResult {
 	}
 
 	// extract phase keywords
-	for keyword, phase := range p.phaseKeywords {
+	for _, keyword := range sortedKeys(p.phaseKeywords) {
+		phase := p.phaseKeywords[keyword]
 		pattern := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(keyword) + `\b`)
 		if pattern.MatchString(lowerQuery) {
 			filters.WeakPhase = StringPtr(phase)
@@ -340,8 +363,8 @@ func removeKeyword(query, keyword string) string {
 func cleanQuery(query string) string {
 	spacePattern := regexp.MustCompile(`\s+`)
 	query = spacePattern.ReplaceAllString(query, " ")
-	
+
 	query = strings.Trim(query, " .,!?")
-	
+
 	return query
 }
