@@ -6,7 +6,8 @@ A chess game analysis system that lets you chat with your Chess.com games using 
 
 - **Go 1.24+**
 - **PostgreSQL** with [pgvector](https://github.com/pgvector/pgvector) extension
-- **Ollama** running locally (embeddings always; chat unless you select a hosted provider)
+- **Ollama** running locally — needed unless you select a hosted provider for
+  *both* chat and embeddings (see [Providers](#providers))
 - **Stockfish** installed and available in PATH
 
 ## Quick Start
@@ -61,8 +62,8 @@ unchanged and the tool still runs with no account, no key, and no network.
 
 | Role | Variable | Values | Default model |
 |------|----------|--------|---------------|
-| Chat | `CHAT_PROVIDER` | `ollama`, `anthropic` | `llama3.2` / `claude-opus-5` |
-| Embeddings | `EMBED_PROVIDER` | `ollama` | `nomic-embed-text` |
+| Chat | `CHAT_PROVIDER` | `ollama`, `anthropic`, `openai` | `llama3.2` / `claude-opus-5` / `gpt-5-2025-08-07` |
+| Embeddings | `EMBED_PROVIDER` | `ollama`, `openai` | `nomic-embed-text` / `text-embedding-3-small` |
 
 Default model IDs are **pinned, never aliased**: a server-side upgrade behind an
 alias would change answers with no code change and no way to notice.
@@ -88,16 +89,37 @@ Failures are reported, never silently retried on another provider: an Anthropic
 error answered from `llama3.2` would leave you comparing outputs without knowing
 which model produced which.
 
+### Using OpenAI
+
+OpenAI is the only provider that serves both halves, so it is the one that can
+take Ollama off the prerequisite list entirely:
+
+```bash
+export OPENAI_API_KEY="..."
+export CHAT_PROVIDER=openai
+export EMBED_PROVIDER=openai
+go run ./cmd/data analyze magnus 2026 01
+go run cmd/chat/main.go magnus
+```
+
+`text-embedding-3-small` is asked for **768 dimensions**, which is the width the
+`game_summaries` column already declares — so no schema migration is involved.
+It is still a *different* embedding model: vectors from two models are not
+comparable even at the same width, so switching embed providers on an existing
+index is refused at startup, naming the re-embed path
+(`go run ./cmd/data reembed`).
+
 ## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `DATABASE_URL` | PostgreSQL connection string | *required* |
-| `CHAT_PROVIDER` | Chat provider: `ollama` or `anthropic` | `ollama` |
+| `CHAT_PROVIDER` | Chat provider: `ollama`, `anthropic`, or `openai` | `ollama` |
 | `CHAT_MODEL` | Chat model (positional CLI arg outranks it) | per provider |
-| `EMBED_PROVIDER` | Embedding provider: `ollama` | `ollama` |
-| `EMBED_MODEL` | Embedding model — must emit **768 dimensions** | `nomic-embed-text` |
+| `EMBED_PROVIDER` | Embedding provider: `ollama` or `openai` | `ollama` |
+| `EMBED_MODEL` | Embedding model — must emit **768 dimensions** | per provider |
 | `ANTHROPIC_API_KEY` | Required when `CHAT_PROVIDER=anthropic` | — |
+| `OPENAI_API_KEY` | Required when either provider is `openai` | — |
 | `OLLAMA_URL` | Ollama server URL (honored by both entrypoints) | `http://localhost:11434` |
 | `OLLAMA_EMBED_MODEL` | Alias for `EMBED_MODEL` when the embed provider is Ollama | `nomic-embed-text` |
 | `NUM_WORKERS` | Parallel analysis workers | `4` |
@@ -153,6 +175,7 @@ internal/
     anthropic/ # Anthropic adapter (chat only)
     llmtest/   # Fakes and the shared conformance suite
     ollama/    # Ollama adapter (chat + embeddings)
+    openai/    # OpenAI adapter (chat + embeddings)
   models/   # Domain types
   search/   # Query parsing and filters
   summary/  # Game summary generation

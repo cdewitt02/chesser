@@ -314,7 +314,9 @@ func runAnalyze() {
 
 	games, err := api.GetData(date, username)
 	if err != nil {
-		log.Fatalf("Failed to get data: %v", err)
+		// The error already names the remedy; a "Failed to get data:" prefix
+		// would only push it further from the start of the line.
+		log.Fatalf("%v", err)
 	}
 	fmt.Printf("Fetched %d games from Chess.com\n", len(games))
 

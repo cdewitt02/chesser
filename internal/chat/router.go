@@ -12,6 +12,20 @@ import (
 )
 
 // returns a pre-computed comparison string for win rates.
+// sortedKeys returns a map's keys in a stable order. Go randomizes map
+// iteration, so any map ranged directly into the prompt makes the assembled
+// prompt differ between two identical runs — which breaks eval comparability
+// (docs/multi-provider/03-eval-plan.md) and makes the prompt uncapturable as a
+// golden. Every map that reaches the prompt goes through here.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func formatWinRateComparison(rate, baseline float64) string {
 	delta := rate - baseline
 	if delta > 0.5 {
@@ -181,7 +195,8 @@ func (r *QueryRouter) writePlayerStats(sb *strings.Builder, stats *models.Player
 	// Color stats with pre-computed comparisons
 	if len(stats.StatsByColor) > 0 {
 		sb.WriteString("\nPerformance by color:\n")
-		for color, s := range stats.StatsByColor {
+		for _, color := range sortedKeys(stats.StatsByColor) {
+			s := stats.StatsByColor[color]
 			winRateCmp := formatWinRateComparison(s.WinRate, overallWinRate)
 			cplCmp := formatCPLComparison(s.AvgCPL, stats.AvgCPL)
 			sb.WriteString(fmt.Sprintf("- As %s: %d games, %.1f%% win rate %s, %.1f avg CPL %s\n",
@@ -198,7 +213,8 @@ func (r *QueryRouter) writePlayerStats(sb *strings.Builder, stats *models.Player
 	// Time class stats with pre-computed comparisons
 	if len(stats.StatsByTimeClass) > 0 {
 		sb.WriteString("\nPerformance by time control:\n")
-		for tc, s := range stats.StatsByTimeClass {
+		for _, tc := range sortedKeys(stats.StatsByTimeClass) {
+			s := stats.StatsByTimeClass[tc]
 			winRateCmp := formatWinRateComparison(s.WinRate, overallWinRate)
 			cplCmp := formatCPLComparison(s.AvgCPL, stats.AvgCPL)
 			sb.WriteString(fmt.Sprintf("- %s: %d games, %.1f%% win rate %s, %.1f avg CPL %s\n",
@@ -238,7 +254,8 @@ func (r *QueryRouter) writePlayerStats(sb *strings.Builder, stats *models.Player
 	// Termination stats (useful for questions about flagging, checkmates, etc)
 	if len(stats.StatsByTermination) > 0 {
 		sb.WriteString("\nGame endings:\n")
-		for term, count := range stats.StatsByTermination {
+		for _, term := range sortedKeys(stats.StatsByTermination) {
+			count := stats.StatsByTermination[term]
 			pct := float64(count) / float64(stats.TotalGames) * 100
 			sb.WriteString(fmt.Sprintf("- %s: %d (%.1f%%)\n", term, count, pct))
 		}
@@ -280,7 +297,8 @@ func (r *QueryRouter) writeTimeControlInsights(sb *strings.Builder, timeClasses 
 	var bestRate, worstRate float64 = -1, 101
 	minGames := 3
 
-	for tc, s := range timeClasses {
+	for _, tc := range sortedKeys(timeClasses) {
+		s := timeClasses[tc]
 		if s.Games < minGames {
 			continue
 		}
@@ -312,7 +330,8 @@ func (r *QueryRouter) writeRatingBandInsights(sb *strings.Builder, bands map[str
 	var bestRate, worstRate float64 = -1, 101
 	minGames := 3
 
-	for band, s := range bands {
+	for _, band := range sortedKeys(bands) {
+		s := bands[band]
 		if s.Games < minGames {
 			continue
 		}
@@ -339,13 +358,18 @@ func (r *QueryRouter) writeOpeningStats(sb *strings.Builder, openings map[string
 		stats *models.OpeningStats
 	}
 	entries := make([]openingEntry, 0, len(openings))
-	for eco, stats := range openings {
-		entries = append(entries, openingEntry{eco, stats})
+	for _, eco := range sortedKeys(openings) {
+		entries = append(entries, openingEntry{eco, openings[eco]})
 	}
 
-	// Sort by games played
+	// Sort by games played, breaking ties on ECO code. sort.Slice is not
+	// stable, so without a total ordering, openings with equal game counts
+	// would come out in a different order on every run.
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].stats.Games > entries[j].stats.Games
+		if entries[i].stats.Games != entries[j].stats.Games {
+			return entries[i].stats.Games > entries[j].stats.Games
+		}
+		return entries[i].eco < entries[j].eco
 	})
 
 	// Show top 5 most played with comparisons to overall
@@ -518,7 +542,8 @@ func (r *QueryRouter) writeMentionedOpeningStats(sb *strings.Builder, stats *mod
 		openingLower := strings.ToLower(opening)
 
 		// Search for matching openings (by ECO code or name)
-		for eco, oStats := range stats.StatsByOpening {
+		for _, eco := range sortedKeys(stats.StatsByOpening) {
+			oStats := stats.StatsByOpening[eco]
 			ecoLower := strings.ToLower(eco)
 			nameLower := strings.ToLower(oStats.OpeningName)
 
