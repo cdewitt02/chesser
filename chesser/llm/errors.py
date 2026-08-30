@@ -9,6 +9,7 @@ checkable as `errors.Is` was.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import Enum
 
 
@@ -54,13 +55,31 @@ class LLMError(Exception):
 
 
 class ConsumerError(Exception):
-    """Wraps an exception raised by a caller's streaming callback.
+    """Internal marker wrapping an exception raised by a caller's on_delta.
 
-    A consumer failure is the consumer's error, not the provider's. Adapters let
-    it propagate untouched; this type exists only so the streaming contract can
-    be stated and tested — "the REPL relies on this to tell 'the terminal write
-    failed' from 'Anthropic is down'".
+    A consumer failure is the consumer's error, not the provider's. But an
+    adapter's streaming loop runs inside a `try` that catches broad SDK
+    exceptions, so without a marker the caller's own exception is swept up and
+    classified as a provider fault — and the REPL loses its ability to tell
+    "the terminal write failed" from "Anthropic is down".
+
+    Adapters wrap the on_delta call in `deliver`, and unwrap on the way out, so
+    what reaches the caller is the exact exception they raised.
     """
+
+    def __init__(self, cause: BaseException) -> None:
+        super().__init__(str(cause))
+        self.cause = cause
+
+
+def deliver(on_delta: Callable[[str], None], text: str) -> None:
+    """Hand one delta to the caller, marking any failure as theirs."""
+    try:
+        on_delta(text)
+    except ConsumerError:
+        raise
+    except BaseException as err:
+        raise ConsumerError(err) from err
 
 
 def classify_status(status: int) -> ErrorKind:

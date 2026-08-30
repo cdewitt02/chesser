@@ -158,9 +158,7 @@ def test_every_summary_data_field_matches_the_golden(
         data: GameSummaryData = regenerated[golden["game_uuid"]]["data"]
         want = golden["data"]
         for go_name, py_name in field_map.items():
-            assert getattr(data, py_name) == want[go_name], (
-                f"{golden['game_uuid']}: {py_name}"
-            )
+            assert getattr(data, py_name) == want[go_name], f"{golden['game_uuid']}: {py_name}"
         for go_phase, py_phase in (
             ("Opening", "opening"),
             ("Middlegame", "middlegame"),
@@ -232,9 +230,7 @@ def test_classify_game_length_boundaries(total_moves: int, want: str) -> None:
         ("something else", False, False, "Unknown pattern"),
     ],
 )
-def test_detect_pattern_matrix(
-    result: str, was_winning: bool, was_losing: bool, want: str
-) -> None:
+def test_detect_pattern_matrix(result: str, was_winning: bool, was_losing: bool, want: str) -> None:
     data = GameSummaryData(result=result, was_winning=was_winning, was_losing=was_losing)
     assert detect_pattern(data) == want
 
