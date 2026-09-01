@@ -129,7 +129,7 @@ eval-comparability defect unfixed.
 | # | Site | Defect | Reached on current corpus? |
 |---|---|---|---|
 | 1 | `internal/summary/generator.go:189` (`weakestPhase`) | `"Endgame was weakest"` is the `else` catch-all, so any *tie* between phase averages is misreported as an endgame weakness | No — 0 of 74 games |
-| 2 | `internal/summary/generator.go:52-60` (`ExtractSummaryData`) | **A drawn game is summarized as a loss.** `GameResult()` returns `"draw"`, never `""`, so the `drew` branch is dead and every draw falls through to `lost` | **Yes — 5 of 74 games** |
+| 2 | ~~`internal/summary/generator.go:52-60` (`ExtractSummaryData`)~~ | ~~**A drawn game is summarized as a loss.**~~ **FIXED 2026-08-31** in `chesser/summary.py:43`, post-cutover as its own change, per the plan below. Covered by `tests/test_summary.py` | Was: yes — 5 of 74 |
 
 **Defect 2, found during Phase 3.** It is the more serious of the two, because unlike #1 it is
 *reached*: it is visible in the Game Summaries, in the embeddings built from them, in the win/loss/draw
@@ -531,7 +531,7 @@ what makes that safe.
   *after* Phase 7, as its own change with its own verification. Folding an optimization into a port
   means a diff that fails can no longer be attributed.
 - **Every entry in "Known preserved defects."** Each is fixed post-cutover as its own change with its
-  own verification. Fixing either makes the stored corpus internally inconsistent until summaries are
+  own verification. **Defect 2 is done** (2026-08-31); Defect 1 remains. Fixing either makes the stored corpus internally inconsistent until summaries are
   regenerated — which is cheap, since `ExtractSummaryData` needs only `games` and `moves`, both stored,
   so no Stockfish re-analysis is involved. That regeneration pass is itself a Phase 8 item, and it must
   be followed by `chesser data reembed`: the summary text *is* the embedded text.

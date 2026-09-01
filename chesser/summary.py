@@ -40,25 +40,15 @@ def extract_summary_data(
     winner = game.game_result()
     if winner == player_color:
         result = "won"
-    elif winner == "":
+    elif winner == "draw":
+        # Was `winner == ""` until 2026-08-31, which game_result() never returns
+        # — so every draw fell through to "lost". Preserved through the port on
+        # purpose (any diff there was supposed to mean a porting bug), fixed
+        # here as its own change. Summaries written before the fix say "lost"
+        # for a draw; `chesser data reembed` after regenerating them realigns
+        # the vectors with their own text.
         result = "drew"
     else:
-        # PARITY: **a drawn game is reported as a loss.** game_result() returns
-        # "draw" for a draw, never "", so the "drew" branch above is dead and
-        # every draw falls through to here. On the stored corpus that is 5 of 74
-        # games, all of them summarized as "lost as <color> in <time class>".
-        #
-        # This is reached, unlike the weakest_phase defect, so it is visible in
-        # the Game Summaries, in the embeddings built from them, and in the
-        # win/loss/draw tallies prompts.py derives by reading the summary text.
-        # It also makes detect_pattern's entire "drew" arm — four of its ten
-        # verdicts — unreachable.
-        #
-        # Preserved exactly. Fixing it changes the summary text, which changes
-        # the embedded text, which makes every stored vector stale relative to
-        # its own source. That is a post-cutover change with its own
-        # verification and its own regeneration pass, not something to slip into
-        # a port where any diff is supposed to mean a bug.
         result = "lost"
 
     opponent_rating = game.black.rating if player_color == "white" else game.white.rating
@@ -213,10 +203,8 @@ def detect_pattern(data: GameSummaryData) -> str:
             return "Was outplayed"
         return "Lost a close game"
 
-    # PARITY: unreachable. extract_summary_data never produces "drew" — see the
-    # note there — so these four verdicts have never been emitted. Ported
-    # anyway: they become live the moment that defect is fixed, and porting them
-    # now means the fix is a one-line change rather than a rewrite.
+    # Live since the draw fix above; unreachable before it, which is why these
+    # four verdicts had never been emitted by either implementation.
     if data.result == "drew":
         if data.was_winning and not data.was_losing:
             return "Missed winning opportunity"

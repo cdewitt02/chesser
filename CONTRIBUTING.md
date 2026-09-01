@@ -67,16 +67,25 @@ real corpus and embed other players' usernames (readiness P0-8):
 them, and the tests that need them skip with a message saying so — that is
 expected, not a broken checkout.
 
-## Two preserved defects
+## One preserved defect
 
-`chesser/summary.py` carries two bugs on purpose, each marked `PARITY:` and
-listed in [`docs/python-rewrite/00-plan.md`](docs/python-rewrite/00-plan.md).
-A test asserts they are still present.
+`chesser/summary.py` carried two bugs on purpose, preserved through the port so
+that any diff meant a porting error rather than a deliberate improvement. **One
+is now fixed**; one remains.
 
-**Do not fix them incidentally.** They are Phase 8 items with their own
-verification, and fixing either changes the Game Summary text — which changes
-the embedded text, which makes every stored vector stale relative to its own
-source. Each needs a regeneration pass alongside it.
+**Fixed 2026-08-31 — a drawn game was summarized as a loss.** `game_result()`
+returns `"draw"` and never `""`, so the `drew` branch was dead. Covered by
+`tests/test_summary.py`, which runs with no database and no goldens.
+
+**Still preserved — `weakest_phase` reports "Endgame was weakest" on any tie**,
+because the endgame is the `else` catch-all. Unreached on the captured corpus.
+Fixing it changes Game Summary text, so it needs its own change with its own
+verification.
+
+**Anything that changes summary text changes the embedded text**, which makes
+stored vectors stale relative to their own source. The remedy is to regenerate
+summaries and then run `chesser data reembed`; a fresh clone is unaffected,
+since it ingests from scratch.
 
 ## Things that are load-bearing
 

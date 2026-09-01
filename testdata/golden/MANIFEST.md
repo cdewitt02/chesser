@@ -89,6 +89,19 @@ the date filter currently selects the whole corpus regardless of when the harnes
 runs. That will stop being true once the corpus contains rows older than
 60 days — at which point `prompts/09.txt` needs recapturing.
 
+## Known staleness
+
+**`summaries.json` and `prompts/` are stale for drawn games as of 2026-08-31.**
+The draw defect (a drawn game summarized as a loss) was fixed that day, so the
+current tree emits `drew as ...` where these files record `lost as ...`. That is
+a deliberate divergence, not a regression: the goldens are frozen at the cutover
+and predate the fix.
+
+`tests/test_parity_summary.py` skips without a database and captured goldens, so
+this does not affect CI. If you have both locally, expect the byte-for-byte
+summary assertions to fail on drawn games and nothing else. Live coverage of the
+fixed behavior is in `tests/test_summary.py`.
+
 ## Regenerating — you cannot, yet
 
 **`legacy/` and its `cmd/golden` capture tool were deleted after the port was validated**

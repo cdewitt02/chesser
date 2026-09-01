@@ -171,27 +171,30 @@ def test_every_summary_data_field_matches_the_golden(
                 )
 
 
-def test_the_two_preserved_defects_are_still_preserved(
+def test_the_remaining_preserved_defect_is_still_preserved(
     summary_goldens: list[dict[str, Any]],
 ) -> None:
-    """A guard against someone "fixing" these during the port.
+    """A guard against someone "fixing" this incidentally.
 
-    Both are recorded in docs/python-rewrite/00-plan.md and both are Phase 8
-    items. If either assertion fails, the port has silently improved on the Go
-    tree — which sounds good and is not, because it means a diff somewhere else
-    now needs adjudication.
+    Recorded in docs/python-rewrite/00-plan.md as a Phase 8 item. Fixing it
+    changes Game Summary text, so it needs its own change with its own
+    verification rather than riding along with something else.
     """
-    # Defect 2: a drawn game is summarized as a loss. Reached — 5 of 74.
-    verdicts = {g["data"]["Result"] for g in summary_goldens}
-    assert "drew" not in verdicts, (
-        "a summary now says 'drew'; preserved defect 2 has been fixed mid-port"
-    )
-    draws = [g for g in summary_goldens if g["data"]["Result"] == "lost"]
-    assert draws
-
-    # Defect 1: "Endgame was weakest" is the tie catch-all. Unreached today.
+    # Defect 1: "Endgame was weakest" is the tie catch-all. Still unreached on
+    # the captured corpus — 0 of 74 — but reachable in principle.
     assert weakest_phase(PhaseStats(), PhaseStats(), PhaseStats()) == "Endgame was weakest", (
         "an all-zero tie must still report the endgame; preserved defect 1 has been fixed"
+    )
+
+    # Defect 2 (a drawn game summarized as a loss) was FIXED on 2026-08-31.
+    # The goldens predate that fix, so they still carry the old text — which is
+    # why this asserts the golden's staleness rather than the code's behavior.
+    # Live coverage of the fix is in tests/test_summary.py, which runs
+    # everywhere; this file skips without a database and captured goldens.
+    verdicts = {g["data"]["Result"] for g in summary_goldens}
+    assert "drew" not in verdicts, (
+        "the goldens now contain 'drew', so they have been recaptured since the "
+        "draw fix — update this test and testdata/golden/MANIFEST.md together"
     )
 
 
