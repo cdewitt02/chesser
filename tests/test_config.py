@@ -11,7 +11,7 @@ import io
 
 import pytest
 
-from chesser.config import Config, ConfigError, resolve
+from chesser.config import Config, ConfigError, redact_secrets, resolve
 
 
 def env_of(pairs: dict[str, str]):  # type: ignore[no-untyped-def]
@@ -243,3 +243,83 @@ def test_config_is_constructible_without_an_sdk_installed() -> None:
         ollama_url="http://localhost:11434",
     )
     assert cfg.uses_hosted_provider()
+
+
+# ---------- credential redaction (readiness P2-5) ----------
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        (
+            "connection failed for postgres://chesser:hunter2@localhost:5432/chesser",
+            "connection failed for postgres://chesser:***@localhost:5432/chesser",
+        ),
+        # psycopg's own parse errors quote the URL back.
+        (
+            "invalid dsn: postgresql://user:s3cr3t@db.example.com:5432/app?sslmode=require",
+            "invalid dsn: postgresql://user:***@db.example.com:5432/app?sslmode=require",
+        ),
+        # A percent-encoded @ inside the password must not end the match early.
+        ("postgresql://u:p%40ss@h/db", "postgresql://u:***@h/db"),
+        # Two URLs in one message.
+        (
+            "tried postgres://a:1@x/db then postgres://b:2@y/db",
+            "tried postgres://a:***@x/db then postgres://b:***@y/db",
+        ),
+        # Provider keys, since the bug template asks for pasted error output.
+        ("key sk-ant-api03-AbC123xyz_-9 rejected", "key sk-*** rejected"),
+        ("Incorrect API key provided: sk-proj-abcd1234EFGH", "Incorrect API key provided: sk-***"),
+    ],
+    ids=["basic", "psycopg-dsn", "encoded-at", "two-urls", "anthropic-key", "openai-key"],
+)
+def test_redact_secrets_blanks_credentials(text: str, want: str) -> None:
+    assert redact_secrets(text) == want
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "postgres://chesser@localhost/chesser",  # no password component
+        "Stockfish not found on PATH",
+        "sk-",  # too short to be a key
+        "",
+    ],
+)
+def test_redact_secrets_leaves_everything_else_alone(text: str) -> None:
+    assert redact_secrets(text) == text
+
+
+def test_the_username_survives_redaction() -> None:
+    """The user is not a secret, and it is usually what makes a connection error
+    diagnosable — "wrong user" and "wrong password" look identical otherwise."""
+    assert "chesser" in redact_secrets("postgres://chesser:pw@localhost/db")
+
+
+def test_the_pool_logger_filter_redacts_a_quoted_dsn() -> None:
+    """psycopg_pool logs connection failures on its own logger, without passing
+    through any chesser error path. A malformed DATABASE_URL makes libpq quote
+    the whole DSN back, so this is the path that actually leaked in practice.
+    """
+    import logging
+
+    from chesser.db import _install_pool_log_redaction
+
+    _install_pool_log_redaction()
+    logger = logging.getLogger("psycopg.pool")
+
+    record = logger.makeRecord(
+        "psycopg.pool",
+        logging.WARNING,
+        __file__,
+        0,
+        'error connecting in %r: missing "=" after "%s" in connection info string',
+        ("pool-1", "notascheme://chesser:hunter2@localhost/chesser"),
+        None,
+    )
+    for log_filter in logger.filters:
+        if isinstance(log_filter, logging.Filter):
+            log_filter.filter(record)
+
+    assert "hunter2" not in record.getMessage()
+    assert "chesser:***@" in record.getMessage()

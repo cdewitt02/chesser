@@ -8,6 +8,7 @@ ingestion silently runs on another.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TextIO
@@ -202,6 +203,36 @@ def _first_non_empty(*values: str) -> str:
     return ""
 
 
+# ---------- credential redaction ----------
+
+# scheme://user:password@host — psycopg embeds the connection string in parse
+# and connection errors, so anything that prints a wrapped database error prints
+# the password with it.
+_URL_CREDENTIALS = re.compile(
+    r"(?P<scheme>[a-zA-Z][a-zA-Z0-9+.\-]*://)(?P<user>[^:/@\s]+):(?P<password>[^@\s]*)@"
+)
+
+# Provider keys, on the same reasoning: an adapter that quotes a response body
+# in an error could carry one, and the bug template asks people to paste error
+# output into a public issue.
+_API_KEY = re.compile(r"\bsk-[A-Za-z0-9_\-]{8,}")
+
+
+def redact_secrets(text: str) -> str:
+    """Blank credentials in anything about to be shown to a user.
+
+    Applied at the point of *output* rather than at each raise site. Error text
+    arrives from psycopg and three vendor SDKs, so enumerating the raise sites
+    means being right about all of them forever; redacting where they converge
+    means being right once.
+
+    The username is kept. It is not a secret, and it is usually the thing that
+    makes a connection error diagnosable.
+    """
+    text = _URL_CREDENTIALS.sub(r"\g<scheme>\g<user>:***@", text)
+    return _API_KEY.sub("sk-***", text)
+
+
 # ---------- startup checks ----------
 
 
@@ -220,7 +251,7 @@ def preflight(warn: TextIO, *models: Any) -> None:
             model.preflight()
         except LLMError as err:
             if err.kind is ErrorKind.PREFLIGHT_INCONCLUSIVE:
-                print(f"Warning: startup check skipped: {err}", file=warn)
+                print(f"Warning: startup check skipped: {redact_secrets(str(err))}", file=warn)
                 continue
             raise
 
@@ -246,7 +277,10 @@ def check_index(database: DB, embedder: Embedder, adopt: bool, warn: TextIO) -> 
         try:
             column_dims = database.embedding_dimensions()
         except Exception as err:
-            print(f"Warning: could not read the embedding column width: {err}", file=warn)
+            print(
+                f"Warning: could not read the embedding column width: {redact_secrets(str(err))}",
+                file=warn,
+            )
         else:
             if column_dims > 0 and column_dims != dims:
                 raise ConfigError(
@@ -257,7 +291,7 @@ def check_index(database: DB, embedder: Embedder, adopt: bool, warn: TextIO) -> 
     try:
         meta = database.get_index_meta()
     except Exception as err:
-        print(f"Warning: could not read index provenance: {err}", file=warn)
+        print(f"Warning: could not read index provenance: {redact_secrets(str(err))}", file=warn)
         return
 
     if meta is None:

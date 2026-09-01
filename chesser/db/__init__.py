@@ -11,6 +11,7 @@ doubling a literal `%` never applies.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -23,6 +24,7 @@ from pgvector.psycopg import register_vector
 from psycopg.rows import tuple_row
 from psycopg_pool import ConnectionPool
 
+from chesser.config import redact_secrets
 from chesser.db.records import (
     GameRecord,
     GameSummary,
@@ -127,6 +129,30 @@ def _move_from_row(row: Sequence[Any]) -> MoveRecord:
     )
 
 
+class _RedactingLogFilter(logging.Filter):
+    """Blank credentials in psycopg_pool's own log records.
+
+    The pool logs connection failures itself, on the "psycopg.pool" logger,
+    without passing through any of chesser's error paths. A malformed
+    DATABASE_URL makes libpq quote the whole DSN back — `missing "=" after
+    "postgres://user:password@host/db"` — which reaches stderr with the password
+    intact. Redacting at chesser's own output sites does not cover this one,
+    because chesser never sees the string.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Render args in first: the DSN arrives as an argument, not in msg.
+        record.msg = redact_secrets(record.getMessage())
+        record.args = ()
+        return True
+
+
+def _install_pool_log_redaction() -> None:
+    logger = logging.getLogger("psycopg.pool")
+    if not any(isinstance(f, _RedactingLogFilter) for f in logger.filters):
+        logger.addFilter(_RedactingLogFilter())
+
+
 class DB:
     """A connection pool plus the queries chesser runs against it."""
 
@@ -134,6 +160,7 @@ class DB:
         if not conn_string:
             conn_string = os.environ.get("DATABASE_URL", "")
         self._conn_string = conn_string
+        _install_pool_log_redaction()
         self._pool = self._open_pool()
 
     def _open_pool(self) -> ConnectionPool[psycopg.Connection[Any]]:

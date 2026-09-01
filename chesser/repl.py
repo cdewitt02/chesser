@@ -23,6 +23,7 @@ from rich.markdown import Markdown
 from rich.text import Text
 
 from chesser.chat.service import Service
+from chesser.config import redact_secrets
 
 # The point below which wrapping does more harm than good, and the point above
 # which full-width prose is measurably harder to read. The coach's answers are
@@ -107,7 +108,7 @@ def run_repl(service: Service, username: str, config_summary: str) -> None:
             # Fail loudly. There is deliberately no fallback to another
             # provider: silently answering from a different model is the exact
             # confusion this feature exists to prevent.
-            print(f"Error: {err}", file=sys.stderr)
+            print(f"Error: {redact_secrets(str(err))}", file=sys.stderr)
 
 
 def _prompt_session(styled: bool) -> object | None:

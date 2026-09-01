@@ -39,7 +39,9 @@ DEFAULT_DETAIL_LIMIT = 10
 
 
 def _fail(message: str) -> None:
-    print(f"Error: {message}", file=sys.stderr)
+    # Redacted here rather than at each call site: several of these messages are
+    # wrapped psycopg errors, which embed the connection string.
+    print(f"Error: {config.redact_secrets(message)}", file=sys.stderr)
     raise typer.Exit(1)
 
 
