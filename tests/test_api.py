@@ -42,9 +42,10 @@ def serve() -> Iterator[responses.RequestsMock]:
         pytest.param(
             404,
             '{"code":0,"message":"User not found."}',
-            ["magnus", "404", "check the username"],
-            # The most likely first-run mistake.
-            id="404 names the username",
+            ["magnus", "404", "misspelled", "no games archived"],
+            # A 404 cannot tell these apart, so the message names both rather
+            # than sending the user after a username that may be correct.
+            id="404 names both causes it cannot distinguish",
         ),
         pytest.param(429, "", ["rate limited", "429"], id="429 says how to recover"),
         pytest.param(

@@ -86,8 +86,16 @@ def analyze(
     month: Annotated[str, typer.Argument(help="Month with its leading zero, e.g. 08")],
 ) -> None:
     """Fetch and analyze one month of games from Chess.com."""
+    # Validated before the request, because Chess.com answers a malformed month
+    # with the same 404 it uses for an unknown username.
     try:
-        games = get_data(YearMonth(year=year, month=month), username)
+        when = YearMonth(year=year, month=month)
+    except ValueError as err:
+        _fail(str(err))
+        return
+
+    try:
+        games = get_data(when, username)
     except ChessComError as err:
         # The message already names the remedy; a "Failed to get data:" prefix
         # would only push it further from the start of the line.

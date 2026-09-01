@@ -62,3 +62,21 @@ class GameSummaryData:
 class YearMonth:
     year: int
     month: str  # a string, because Chess.com's URL needs the leading zero
+
+    def __post_init__(self) -> None:
+        """Reject a month the Chess.com URL cannot express.
+
+        An unpadded month builds a path Chess.com answers with 404, which is
+        indistinguishable from a misspelled username at the HTTP layer. Catching
+        it here means the caller never spends a request finding out.
+        """
+        if not (
+            len(self.month) == 2
+            and self.month.isascii()
+            and self.month.isdigit()
+            and 1 <= int(self.month) <= 12
+        ):
+            raise ValueError(
+                f"invalid month {self.month!r}: expected 01-12, with the leading zero "
+                "(Chess.com's URL requires two digits)"
+            )

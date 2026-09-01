@@ -75,9 +75,12 @@ def _status_message(response: requests.Response, date: YearMonth, username: str)
     body = _snippet(response.text)
 
     if response.status_code == 404:
+        # A 404 does not distinguish these, so the message must not either:
+        # asserting one cause sent a user hunting a username that was correct.
         return (
             f'no games found for user "{username}" in {date.year}/{date.month}: '
-            "Chess.com returned 404 — check the username spelling"
+            "Chess.com returned 404 — either the username is misspelled, or that "
+            "player has no games archived for that month"
         )
     if response.status_code == 429:
         retry_after = (response.headers.get("Retry-After") or "").strip()

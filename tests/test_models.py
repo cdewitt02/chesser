@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from chesser.models import Game, Player, rating_band
+from chesser.models import Game, Player, YearMonth, rating_band
 
 PGN = """[Event "Live Chess"]
 [White "PennedIn"]
@@ -106,3 +106,21 @@ def test_game_from_json_tolerates_a_sparse_payload() -> None:
     assert game.rated is False
     assert game.accuracies == {}
     assert game.end_time == 0
+
+
+@pytest.mark.parametrize("month", ["01", "08", "12"])
+def test_yearmonth_accepts_a_padded_month(month: str) -> None:
+    assert YearMonth(year=2026, month=month).month == month
+
+
+@pytest.mark.parametrize(
+    "month",
+    ["1", "8", "0", "00", "13", "", "aa", "8 ", "008", "١٢"],
+    ids=["1", "8", "0", "00", "13", "empty", "letters", "trailing-space", "three-digit", "arabic"],
+)
+def test_yearmonth_rejects_a_month_the_url_cannot_express(month: str) -> None:
+    """An unpadded month builds a path Chess.com answers with 404 — the same
+    status it uses for an unknown username. Rejecting it here is what keeps a
+    padding mistake from being reported as a misspelled username."""
+    with pytest.raises(ValueError, match="expected 01-12"):
+        YearMonth(year=2026, month=month)
