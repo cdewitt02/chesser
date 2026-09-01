@@ -1,8 +1,21 @@
 # Multi-Provider Support — Design
 
-Proposal for letting chesser use Anthropic, OpenAI, Ollama, or others. Read
-[`00-current-state.md`](./00-current-state.md) first; the findings in its §7 are the constraints this
-design answers to.
+Proposal for letting chesser use Anthropic, OpenAI, Ollama, or others.
+
+**The constraints this design answers to**, from an audit of the pre-multi-provider codebase:
+
+1. Anthropic has no embeddings API → chat and embeddings **cannot** share one provider concept.
+2. `vector(768)` is survivable via `dimensions=768`, but same-width/different-space vectors degrade
+   retrieval silently — the index needs a provenance stamp, not a schema migration.
+3. `cmd/data` hardcoded the Ollama endpoint → had to be fixed before selection meant anything.
+4. No `context.Context` on either method → the interface should add it, a signature change at every
+   call site.
+5. Anthropic's system-parameter and alternation rules break the existing message assembly.
+6. Single-string response parsing breaks on block-based and reasoning responses.
+7. The prompt is ~3k tokens — cheap on hosted providers, but likely truncated by Ollama's default
+   `num_ctx`, cutting the instructions that are emitted last.
+8. Chat model was a CLI positional, embed model was env — provider selection must respect both.
+9. Zero test coverage on every call site being changed.
 
 **Setup context.** [`04-onboarding.md`](./04-onboarding.md) measures what this work is worth for
 onboarding, and its §2.2 changes one thing here materially: hosted **embeddings** are main-line, not
@@ -30,8 +43,8 @@ about six minutes. Storage is settled separately in [`ADR 0001`](../adr/0001-pos
 
 **Recommendation: two independent interfaces, two independent selections.**
 
-The decisive argument is not tidiness — it is that **Anthropic has no embeddings API**
-([`00-current-state.md` §4.1](./00-current-state.md)). A unified `Provider` interface with both `Chat`
+The decisive argument is not tidiness — it is that **Anthropic has no embeddings API**: it offers none
+and points users to third parties such as Voyage. A unified `Provider` interface with both `Chat`
 and `Embed` would force the Anthropic implementation to return `ErrUnsupported` from `Embed`, i.e. a
 type that satisfies an interface it cannot honor. Every caller would then need a capability check
 before every call, which is the interface failing at its one job.
@@ -44,7 +57,7 @@ unified provider makes the honest experiment impossible to configure.
 Independent selection additionally means:
 
 - Ollama embeddings (free, local, already indexed) + Anthropic chat is the default upgrade path, and it
-  requires **no re-embedding** ([`00-current-state.md` §4.2](./00-current-state.md)).
+  requires **no re-embedding**.
 - The `vector(768)` migration is only forced when someone deliberately changes the *embedding*
   provider, decoupled from trying a new chat provider.
 
@@ -61,8 +74,9 @@ cost at this project's size.
 ### 2.1 Index provenance
 
 Because chat and embeddings are selected independently, a user can change `EMBED_PROVIDER` while leaving
-an existing index in place. Same width, different vector space, silent degradation
-([`00-current-state.md` §4.2](./00-current-state.md)).
+an existing index in place. Same width, different vector space, silent degradation — `nomic-embed-text`
+and OpenAI's `text-embedding-3-small` at 768 dimensions occupy unrelated spaces, and cosine distance
+across them is meaningless rather than merely inaccurate.
 
 Record the Embedding Provider and model that produced the stored vectors — a small `index_meta` row
 alongside `game_summaries` — and refuse at startup when the configured embedder does not match, naming
@@ -75,8 +89,9 @@ without re-running analysis.
 
 ### 2.2 Rename `internal/embeddings`
 
-The package is currently named `embeddings` but owns chat too ([`00-current-state.md` §1](./00-current-state.md)).
-Proposed layout:
+The package is currently named `embeddings` but owns chat too — all Ollama traffic in the repo
+originates from one 131-line file, `internal/embeddings/ollama.go`, holding both `GetEmbedding` and
+`Chat`. Proposed layout:
 
 ```
 internal/llm/            interfaces, message types, options, errors, registry
@@ -176,7 +191,7 @@ type StreamingChatModel interface {
 
 | Change | Reason |
 |---|---|
-| `ctx context.Context` first arg | Neither current method takes one ([`00-current-state.md` §1](./00-current-state.md)); ingestion cancellation is currently ignored for up to 10s per in-flight call |
+| `ctx context.Context` first arg | Neither current method takes one — both use `httpClient.Post`, so calls are uncancellable; ingestion cancellation is ignored for up to 10s per in-flight call |
 | `System` as a field, not `messages[0]` | Anthropic requires it; making it structural stops callers from reintroducing the bug |
 | No `RoleSystem` constant | Removes the only way to construct a message shape Anthropic rejects |
 | `ChatResponse` struct, not `string` | Carries `FinishReason` (truncation is currently invisible) and `Usage` (cost visibility for hosted providers) |
@@ -186,8 +201,8 @@ type StreamingChatModel interface {
 
 ### 3.2 The model-source asymmetry
 
-Today the embed model is bound at construction while the chat model is a per-call argument
-([`00-current-state.md` §1.2](./00-current-state.md)). Resolution: **construction-time default,
+Today the embed model is bound at construction (`Client.model`) while the chat model is a per-call
+argument — an asymmetry the two call sites answer differently. Resolution: **construction-time default,
 per-request override.** `Embedder` has no model field at all (a mixed-model index is always a bug);
 `ChatRequest.Model` may override, which is exactly what preserves the existing
 `go run cmd/chat/main.go <username> [model]` positional argument.
@@ -224,8 +239,7 @@ Errors wrap a sentinel plus provider name plus the underlying cause, so
 
 **Recommendation: env vars, `CHAT_PROVIDER` and `EMBED_PROVIDER`.**
 
-Justification against existing conventions
-([`00-current-state.md` §5](./00-current-state.md)): the project is entirely env-driven for
+Justification against existing conventions: the project is entirely env-driven for
 infrastructure and tuning (`DATABASE_URL`, `OLLAMA_URL`, `OLLAMA_EMBED_MODEL`, `NUM_WORKERS`), with
 positional CLI args reserved for per-invocation choices (username, chat model). Provider is
 infrastructure — the same across every invocation on a given machine, and it travels with the API key,
@@ -351,8 +365,9 @@ gratuitous break for users of a project whose setup is already hard.
 
 ## 6. Credentials
 
-The project handles **no secrets at all today** ([`00-current-state.md` §5](./00-current-state.md)).
-This introduces the first, so the posture should be explicit.
+The project handles **no secrets at all today** — Chess.com's public API is unauthenticated and Ollama
+is local, so an API key would be the first credential this project has ever held. This introduces it, so
+the posture should be explicit.
 
 - **Env vars only.** No key file, no keyring, no CLI flag (flags land in shell history and `ps` output).
 - **Provider-standard names** — `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`. Users likely have them exported
@@ -387,7 +402,7 @@ Reasoning specific to this project:
    the exact failure mode the feature exists to prevent.
 2. **It contradicts the existing failure philosophy** — or rather, it repeats the bug the codebase
    already has. `GetEmbedding` returning `(nil, nil)` on an error response
-   ([`00-current-state.md` §1.1](./00-current-state.md)) is precisely "degrade silently," and it can
+   is precisely "degrade silently," and it can
    poison the vector index. Fallback would be the same mistake with better intentions.
 3. **The fallback may not exist.** A user who chose Anthropic may have no Ollama running and no
    `llama3.2` pulled. "Fall back" would mean a connection-refused error attributed to the wrong
@@ -469,7 +484,7 @@ Design consequences:
   `internal/chat` must never learn which provider it is talking to. The interface in §3 is shaped to
   make that automatic.
 - **Silent truncation is the sharpest behavioral difference — not cost.** A realistic prompt is ~3k
-  input tokens ([`00-current-state.md` §4.5](./00-current-state.md)), which is a fraction of a cent per
+  input tokens (~500 out), which is a fraction of a cent per
   question on any hosted provider. Bill shock is not a real risk and **token budgeting does not merit
   priority**. What matters is the other side: ~3k plus history likely exceeds Ollama's default
   `num_ctx`, so the local path is being truncated today — and the instructions are emitted last, so they
@@ -523,7 +538,7 @@ working. That is a purely additive change with no breakage — which is exactly 
 1. **Delete or port `AskWithDetails`?** — **Decided: delete**, in Phase 1. It is unreferenced
    (`service.go:136`), and deleting it also removes the only caller of `WrapUserQuestion`
    (`prompts.go:168-178`) — the bracketed in-user-turn wrapper that is a small-model steering workaround
-   and reads as an injection attempt on Anthropic ([`00-current-state.md` §4.3](./00-current-state.md)).
+   and reads as an injection attempt on Anthropic.
    `BuildFollowUpPrompt` (`prompts.go:158`) goes with it, also unreferenced. Dead code should not be
    ported to a new interface, and this particular dead code would have to be redesigned to survive a
    provider swap.
@@ -547,11 +562,11 @@ working. That is a purely additive change with no breakage — which is exactly 
 The two cases differ in how fast the code rots.
 
 **Ollama's surface is small and stable** — two endpoints with flat JSON, already written and working in
-131 lines ([`00-current-state.md` §1](./00-current-state.md)). The official `ollama` Go package means
+131 lines. The official `ollama` Go package means
 importing the whole application module to reach `/api/chat` and `/api/embeddings`. Not worth it.
 
 **Anthropic's and OpenAI's surface is neither.** Content-block arrays, thinking blocks to skip, and
-`finish_reason` variants ([`00-current-state.md` §4.4](./00-current-state.md)) are exactly what changes
+`finish_reason` variants are exactly what changes
 with model releases — and exactly what a hand-rolled client gets subtly wrong and then carries forever.
 Add `anthropic-version` and beta headers, `Retry-After` semantics, and SSE parsing if streaming ever
 lands (§9).

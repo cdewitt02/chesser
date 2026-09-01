@@ -1,8 +1,9 @@
 # chesser — Prioritized Roadmap
 
-Derived from [`00-audit.md`](./00-audit.md), audited at commit `2bcd4cb` against the **Go**
-implementation. **Remapped to Python on 2026-08-31**, after the rewrite ([ADR 0002](../adr/0002-python-rewrite.md))
-and the deletion of `legacy/`.
+Derived from a readiness audit of commit `2bcd4cb`, against the **Go** implementation. **Remapped to
+Python on 2026-08-31**, after the rewrite ([ADR 0002](../adr/0002-python-rewrite.md)) and the deletion of
+`legacy/`; the audit document itself was retired at the same time, its surviving findings folded into the
+items below.
 
 Every open item states **Problem → Fix → Effort → Risk/tradeoff**. Effort is calendar-ish for one person familiar with the code: **S** ≤ 1 hour, **M** a few hours to a day, **L** multiple days.
 

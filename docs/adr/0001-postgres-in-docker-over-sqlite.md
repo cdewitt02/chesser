@@ -5,9 +5,10 @@
 ## Context
 
 chesser's setup is the main barrier to anyone using it. A new user must install Go, PostgreSQL,
-pgvector, Stockfish, and Ollama, then pull ~1.5 GB of models. `docs/opensource-readiness/00-audit.md`
-§5.1 measures this at 45–90 minutes, ending in failure. pgvector is the worst single step: it commonly
-requires building from source against local PG headers.
+pgvector, Stockfish, and Ollama, then pull ~1.5 GB of models. A cold-start audit measured this at
+**45–90 minutes, ending in failure** — the README's ingestion command did not compile, so the run failed
+at the first step where the user would have seen the project do anything. pgvector is the worst single
+step at 10–20 minutes: it commonly requires building from source against local PG headers.
 
 The goal driving this decision is an easy on-ramp to chatting for *all* users, not only developers.
 

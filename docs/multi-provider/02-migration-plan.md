@@ -13,7 +13,7 @@ settled separately in [`ADR 0001`](../adr/0001-postgres-in-docker-over-sqlite.md
 `vector(768)` stays with it.
 
 **Verification reality check.** The repo has one test file — `internal/search/parser_test.go`, six pure
-unit tests ([`00-current-state.md` §6](./00-current-state.md)). There is no regression suite to lean on,
+unit tests, and **zero LLM-related coverage** of any kind. There is no regression suite to lean on,
 so most verification below is either *new* tests written as part of the phase or explicit manual steps.
 Pretending otherwise would be the fastest way to break ingestion silently.
 
@@ -29,8 +29,9 @@ first eval data point.
 **Prerequisite, not part of the abstraction.** Small, and everything after it depends on it.
 
 - `cmd/data/main.go:251` hardcodes `embeddings.New("http://localhost:11434", "nomic-embed-text")`,
-  ignoring `OLLAMA_URL` and `OLLAMA_EMBED_MODEL` ([`00-current-state.md` §2.3](./00-current-state.md)).
-  Make it read the same env vars as `cmd/chat/main.go:52-60`.
+  ignoring `OLLAMA_URL` and `OLLAMA_EMBED_MODEL` — which `cmd/chat/main.go:84` honors. Ingestion is
+  therefore silently on a different endpoint and model than chat, so a provider chosen for chat leaves
+  the index built by something else. Make it read the same env vars as `cmd/chat/main.go:52-60`.
 - Lift that resolution into one shared place so the two entrypoints cannot drift again.
 
 **Why first.** Provider selection wired into `cmd/chat` alone would give a user chat on Anthropic and
@@ -57,8 +58,10 @@ Change dependents to accept interfaces:
 
 - `chat.Service.ollama` → two fields (`chat llm.ChatModel`, and the embedder passed through to
   `search.NewHybridSearcher`), replacing the concrete `*embeddings.Client` at `service.go:14, 34, 51`.
-  This is where the double-duty of one concrete object
-  ([`00-current-state.md` §3](./00-current-state.md)) finally comes apart.
+  This is where the double duty of one concrete object finally comes apart: `*embeddings.Client`
+  currently plays both the embedder role (passed to `NewHybridSearcher`, `service.go:51`) and the chat
+  role (`service.go:100, 178`) — two roles that different providers implement differently, and one of
+  which Anthropic does not implement at all.
 - `Worker.embeddingClient` / `WorkerPool.embeddingClient` → `llm.Embedder`
   (`worker.go:22, 100, 104`).
 - `internal/search` needs **no change** — `llm.Embedder` satisfies `search.EmbeddingClient` structurally,
@@ -70,8 +73,11 @@ Delete `internal/embeddings` when nothing imports it.
 some current behavior is a bug:
 
 1. **Status codes are now checked on embeddings.** `GetEmbedding` currently returns `(nil, nil)` on an
-   error response and lets a nil vector reach the `vector(768)` column
-   ([`00-current-state.md` §1.1](./00-current-state.md)). The port must check status and reject empty
+   error response and lets a nil vector reach the `vector(768)` column: `ollama.go:69-86` never
+   inspects `resp.StatusCode`, so an error body unmarshals cleanly into `{Embedding: nil}` and the nil
+   flows through `worker.go:35-38` into `SaveGameSummary`. A hosted provider returning 401 or 429 would
+   take exactly this path. (`Chat` in the same file checks status correctly — this is an oversight, not
+   a convention.) The port must check status and reject empty
    vectors. Ingestion that used to "succeed" against a broken Ollama will now fail — correctly.
 2. **`context.Context` is threaded through.** Cancelling ingestion now actually cancels in-flight calls.
 3. **Timeouts unify.** Replace the 10s embed / 120s chat split and the per-call client at
@@ -166,7 +172,8 @@ The three things this adapter must get right, all invisible to callers:
    a malformed request through. Today's history assembly (`service.go:105-108`) satisfies this by
    accident — the adapter is where it becomes guaranteed.
 3. Flatten the content-block array to text, skipping thinking blocks. A naive `.content` read yields an
-   empty string ([`00-current-state.md` §4.4](./00-current-state.md)).
+   empty string: `ollama.go:124-130` decodes into a single `Message.Content` string, where Anthropic
+   returns `content` as an array of typed blocks.
 
 **Verification.** Same fixture suite plus the shared conformance table — notably a fixture with a
 multi-block response and one with a thinking block, asserting `Text` contains only the answer. Plus a

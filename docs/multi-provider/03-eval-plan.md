@@ -158,8 +158,8 @@ capture.
 the README. Not on a schedule.
 
 Note `NumSimilar` is not on that list: it sets retrieval `TopK` and 90 of its 100 games are discarded
-before the prompt is built ([`00-current-state.md` §4.5](./00-current-state.md)), so changing it does not
-change what the model sees.
+before the prompt is built, so changing it does not change what the model sees. It is wasted query
+work per question, not prompt bloat — only `DetailLimit` is a cost lever.
 
 **Pinned defaults are what make re-running meaningful.** Because default model IDs are pinned rather
 than aliased ([`01-design.md` §4.3](./01-design.md)), a score change between runs is attributable to
@@ -181,12 +181,14 @@ fixes it. That distinction is the single most useful thing this eval produces, a
 unmeasurable.
 
 **Prompt-portability findings.** Divergent scores on the same prompt localize provider-specific
-assumptions ([`00-current-state.md` §4.3](./00-current-state.md)) — the pre-computed comparison strings
-(`router.go:276-295`), the uppercase section headers, the `[vs USERNAME]` citation convention
+assumptions — conventions that were written for a small local model. The pre-computed comparison
+strings (`router.go:276-295`, e.g. `(3.2% ABOVE overall)`) exist to spare a weak model from doing
+arithmetic; against a strong model they are harmless redundancy, and worth keeping precisely because
+they make the comparison fairer. Likewise the uppercase section headers and the `[vs USERNAME]` convention
 (`router.go:703`). Instructions that only work on one provider are prompt bugs.
 
-**Check `num_ctx` before trusting any local result.** A realistic prompt is ~3k tokens
-([`00-current-state.md` §4.5](./00-current-state.md)), against an Ollama default `num_ctx` of 2048–4096.
+**Check `num_ctx` before trusting any local result.** A realistic prompt is ~3k input tokens (~500
+out), against an Ollama default `num_ctx` of 2048–4096.
 If the local model is silently receiving a truncated prompt — and `writeInstructions` is emitted last in
 `BuildPrompt`, so the instructions are the first thing lost — then every local-vs-hosted score
 difference is measuring context length, not model capability. **Record the effective `num_ctx` for each
@@ -194,7 +196,7 @@ Ollama run, and re-run with it raised above the prompt size.** Without this the 
 comparison is invalid, and the invalidity is invisible.
 
 **A silent-truncation check.** Today's prompt is unbounded and Ollama has been quietly truncating it to
-`num_ctx` ([`00-current-state.md` §4.5](./00-current-state.md)). If a hosted model — which receives the
+`num_ctx`. If a hosted model — which receives the
 prompt in full — scores markedly higher on questions requiring the tail of the context (openings,
 rating-band stats, termination breakdowns), that is evidence local answers have been degraded by
 truncation all along, not by model capability. It is a distinct fix (raise `num_ctx`, or trim the

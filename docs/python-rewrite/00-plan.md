@@ -98,8 +98,8 @@ The tempting exception is a defect that is provably unreached on the current cor
 changes no output today. **Reject it.** "Unreached on today's corpus" is not "unreachable" — the first
 user with different games hits the branch, the two implementations diverge, and nothing fails, because
 the goldens were captured from a corpus where it never fired. That is this project's characteristic
-failure mode (see [`opensource-readiness/00-audit.md`](../opensource-readiness/00-audit.md) §7)
-reintroduced at the exact point built to prevent it.
+failure mode — silence, where an error status parses cleanly into an empty result and the program
+reports success — reintroduced at the exact point built to prevent it.
 
 **What parity is measured on.** Observable outputs, not internal structure. The unit is what leaves the
 system: **Game Summaries, `moves` rows, query result sets, and Assembled Prompts.** Function signatures,

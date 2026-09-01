@@ -15,7 +15,8 @@ games. Setup time alone is misleading, because Ingestion sits between setup and 
 
 Estimates below assume one month of games (~150), ingestion at `ANALYSIS_DEPTH = 12`
 (`cmd/data/main.go:22`) with 4 workers, and +15% for Docker's VM on macOS and Windows. Install times
-come from [`../opensource-readiness/00-audit.md`](../opensource-readiness/00-audit.md) §5.1.
+come from a cold-start audit of the Go tree: Go 5 min, PostgreSQL 10, pgvector 10–20, database and
+extension 2, Ollama 5, two model pulls 10–20, Stockfish 5, `DATABASE_URL` 1 — 45–90 minutes in total.
 
 | # | Path | Setup | Ingest | **Total** |
 |---|---|---|---|---|
