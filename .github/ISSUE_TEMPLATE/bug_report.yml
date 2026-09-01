@@ -1,0 +1,131 @@
+name: Bug report
+description: Something behaves differently than documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Setup for this project touches several moving parts, so most reports are
+        unanswerable without the environment below. Please fill it in even if it
+        seems irrelevant — it usually isn't.
+
+        **Before filing:** the README's Troubleshooting section covers the
+        failures that look like bugs but aren't, including the embedding
+        provider mismatch and the leading-zero month.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+      placeholder: |
+        Expected: `chesser data analyze me 2026 03` to fetch March games.
+        Got: "no games found for user ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact commands you ran, in order.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Error output
+      description: |
+        Paste the full message. It is rendered as a code block, so no need to
+        format it. **Check it for credentials before posting** — if a database
+        URL appears, replace the password.
+      render: text
+
+  - type: dropdown
+    id: providers
+    attributes:
+      label: Which providers were selected?
+      description: |
+        `CHAT_PROVIDER` and `EMBED_PROVIDER`. This is the first thing that gets
+        asked otherwise — a hosted API and a local model fail in different ways.
+      multiple: true
+      options:
+        - Chat: ollama (default)
+        - Chat: anthropic
+        - Chat: openai
+        - Embeddings: ollama (default)
+        - Embeddings: openai
+    validations:
+      required: true
+
+  - type: input
+    id: chesser-version
+    attributes:
+      label: Chesser version or commit
+      description: "`chesser --version`, or the output of `git rev-parse --short HEAD`."
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: "`python --version`"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install it?
+      options:
+        - uv tool install
+        - pipx install
+        - editable install (uv pip install -e)
+        - other
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Ubuntu 24.04 / macOS 15.2 / Windows 11"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: database
+    attributes:
+      label: How is PostgreSQL running?
+      options:
+        - docker compose (the bundled docker-compose.yml)
+        - native install with pgvector
+        - other / managed
+    validations:
+      required: true
+
+  - type: input
+    id: postgres-version
+    attributes:
+      label: PostgreSQL and pgvector versions
+      description: |
+        `SELECT version();` and
+        `SELECT extversion FROM pg_extension WHERE extname='vector';`
+      placeholder: "PostgreSQL 17.2, pgvector 0.8.6"
+
+  - type: input
+    id: stockfish
+    attributes:
+      label: Stockfish version
+      description: "`stockfish` then `uci`, or your package manager's version. Only needed for ingestion bugs."
+      placeholder: "Stockfish 17"
+
+  - type: input
+    id: ollama
+    attributes:
+      label: Ollama version and models
+      description: "Only if you selected Ollama for either role. `ollama --version` and `ollama list`."
+      placeholder: "0.5.4 — llama3.2, nomic-embed-text"

@@ -1,0 +1,8 @@
+# Discussions is deliberately not enabled — see
+# docs/opensource-readiness/02-open-questions.md Q6. One inbox that gets
+# answered beats two that do not.
+blank_issues_enabled: true
+contact_links:
+  - name: Setup not working?
+    url: https://github.com/cdewitt02/chesser#troubleshooting
+    about: The README's Troubleshooting section covers the failures that look like bugs but are not.
