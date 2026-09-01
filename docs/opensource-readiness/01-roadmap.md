@@ -36,6 +36,12 @@ rather than deleted, so the audit's findings stay traceable to their resolution.
 | P4-3 Promote the engine package | **Moot** | The reusable part was the UCI wrapper, and that is now `python-chess`'s job, not ours |
 | P4-4 Swappable LLM backend | **Done** | `chesser/llm/` protocols with three adapters and a conformance suite |
 | P0-8 Opponent usernames | **Done** 2026-08-31 | `normalize_termination` in `chesser/models/game.py`, applied at both leak paths; `tests/test_termination.py` |
+| P0-2 LICENSE | **Done** 2026-08-31 | MIT; `pyproject.toml` metadata corrected from `UNLICENSED` |
+| P3-5 README demo | **Done** 2026-08-31 | Real session at the top, banner copied from `chesser/repl.py` |
+| P3-1 Docker Compose | **Done** 2026-08-31 | `pgvector/pgvector:pg17` + an init script; `docker compose up -d` is the whole database setup |
+| P1-4 Issue/PR templates | **Done** 2026-08-31 | `.github/ISSUE_TEMPLATE/`, provider fields required |
+| P2-5 Credential redaction | **Done** 2026-08-31 | `redact_secrets`, plus a filter on psycopg's own pool logger — the path that actually leaked |
+| P3-4 Troubleshooting | **Done** 2026-08-31 | README section keyed to reproduced failures |
 
 **What this leaves.** No P0s. The last one, P0-8, was closed on 2026-08-31 — see below for what it
 turned out to involve.

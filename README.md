@@ -314,6 +314,69 @@ testdata/golden/    # Regression suite frozen at the cutover — see its MANIFES
 docker-compose.yml  # Postgres + pgvector for local development
 ```
 
+## Troubleshooting
+
+**`Error: invalid month '1': expected 01-12, with the leading zero`**
+Chess.com's URL needs two digits. Use `01`, not `1`. Rejected before any network
+request, so nothing is wasted.
+
+**`no games found for user "x" in 2026/01 — Chess.com returned 404`**
+Either the username is misspelled or that player has no games archived for that
+month. A 404 cannot tell those apart, which is why the message names both.
+
+**`Error: embedding provider mismatch: the index was built with ollama/...`**
+Working as designed, not a bug. Vectors from different embedding models are not
+comparable even at the same width, so retrieval would silently degrade rather
+than fail. Either restore the previous `EMBED_PROVIDER` and `EMBED_MODEL`, or
+re-embed:
+
+```bash
+chesser data reembed
+```
+
+That reads stored summary text and rebuilds vectors — no Stockfish, no
+re-analysis, so it is fast.
+
+**`failed to bind host port 0.0.0.0:5432: address already in use`**
+Something else — usually a native PostgreSQL — already holds the port.
+
+```bash
+CHESSER_DB_PORT=5433 docker compose up -d
+export DATABASE_URL="postgres://chesser:chesser@localhost:5433/chesser"
+```
+
+**`Error: DATABASE_URL environment variable is required`**
+Nothing loads `.env` automatically. Source it, or export the variable:
+
+```bash
+. ./.env
+```
+
+**Ollama connection refused, or a model 404**
+Check `ollama list` — the chat model and `nomic-embed-text` both need pulling.
+Startup checks run before the banner, so this surfaces immediately rather than
+after your first question.
+
+**`exec: "stockfish": executable file not found`**
+Stockfish must be on `PATH`. It is only needed for `chesser data analyze`, not
+for chatting, so this appears during ingestion.
+
+**Missing API key for a hosted provider**
+`ANTHROPIC_API_KEY` for `CHAT_PROVIDER=anthropic`, `OPENAI_API_KEY` for either
+role set to `openai`. Resolved before the welcome banner, so an auth failure is
+never revealed only after your first question.
+
+**Ingestion is slow**
+Expect roughly a second per game — every move is searched twice by Stockfish,
+which dominates the run. `NUM_WORKERS` (default 4) is the knob; each worker
+spawns its own Stockfish process, so raising it past your core count will not
+help.
+
+**Something else**
+Error output is redacted for passwords and API keys before printing, so it is
+safe to paste into an issue. Please include the environment the bug template
+asks for — most reports are unanswerable without it.
+
 ## Contributing
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) — the short
