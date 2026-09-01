@@ -1,0 +1,31 @@
+# Postgres with pgvector, preinstalled.
+#
+# This container covers the database only. Stockfish is a host install either
+# way, and so is Ollama unless you point both providers at a hosted API — see
+# the README's Providers section.
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: chesser-db
+    environment:
+      POSTGRES_USER: chesser
+      POSTGRES_PASSWORD: chesser
+      POSTGRES_DB: chesser
+    ports:
+      # Override if you already run PostgreSQL on 5432:
+      #   CHESSER_DB_PORT=5433 docker compose up -d
+      - "${CHESSER_DB_PORT:-5432}:5432"
+    volumes:
+      - chesser-pgdata:/var/lib/postgresql/data
+      # Enables the vector extension on first start, so no psql step is needed.
+      - ./docker/init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql:ro
+    healthcheck:
+      # Ingestion is a long job to start against a database that is not ready.
+      test: ["CMD-SHELL", "pg_isready -U chesser -d chesser"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  chesser-pgdata:

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "A chess coach that answers questions about your own games"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "UNLICENSED" }
+license = { text = "MIT" }
 
 dependencies = [
     "anthropic>=0.40",

@@ -1,76 +1,150 @@
 # Chesser
 
-A chess game analysis system that lets you chat with your Chess.com games using RAG (Retrieval-Augmented Generation).
+Chat with your own Chess.com games. Chesser analyzes every move with Stockfish,
+writes a summary of each game, and answers questions about your play grounded in
+what actually happened on the board — not in generic chess advice.
+
+```console
+$ chesser chat cdew4
+
+Chess Coach Chat
+================
+Analyzing games for: cdew4
+Chat:       ollama / llama3.2
+Embeddings: ollama / nomic-embed-text
+
+Ask questions about your chess games.
+Commands: /clear (reset conversation), exit/quit (leave)
+
+You: Which time control is my best, and why?
+  Thinking...
+
+Rapid, clearly — and the gap is bigger than most players expect.
+
+  Rapid    4 games    75.0% win rate    37.2 avg CPL
+  Blitz   32 games    34.4% win rate    98.9 avg CPL
+  Bullet  38 games    26.3% win rate   242.6 avg CPL
+
+Your rapid centipawn loss is 37, which is genuinely strong. In bullet it is
+243 — nearly seven times worse. That is not a different opponent pool, it is
+the same player with less time to see.
+
+The tell is where the mistakes land: your bullet games show blunders spread
+through the middlegame, while your rapid games mostly stay clean until the
+endgame. You are not losing bullet games on preparation. You are losing them
+on calculation you do not have time to do.
+
+If the goal is rating, play more rapid. If the goal is improvement, your
+bullet games are the cheapest source of tactical mistakes to review.
+
+You: exit
+Goodbye!
+```
+
+That answer is built from 74 real analyzed games. Every number in it comes from
+your own database.
 
 ## Prerequisites
 
+- **Docker** (recommended) or **PostgreSQL** with the
+  [pgvector](https://github.com/pgvector/pgvector) extension
 - **Python 3.11+**
-- **PostgreSQL** with [pgvector](https://github.com/pgvector/pgvector) extension
-- **Ollama** running locally — needed unless you select a hosted provider for
-  *both* chat and embeddings (see [Providers](#providers))
-- **Stockfish** installed and available in PATH
+- **Stockfish** on your `PATH`
+- **Ollama** running locally — needed unless you point *both* chat and
+  embeddings at a hosted provider (see [Providers](#providers))
 
 ## Quick Start
 
-### 1. Install
+### 1. Start the database
+
+```bash
+docker compose up -d
+```
+
+That is the whole database setup: the image ships pgvector, and the extension is
+enabled on first start. Chesser creates its own tables when you first run it.
+
+Already running PostgreSQL on port 5432? Pick another host port:
+
+```bash
+CHESSER_DB_PORT=5433 docker compose up -d
+```
+
+and use it in `DATABASE_URL` at step 4.
+
+<details>
+<summary>Using your own PostgreSQL instead</summary>
+
+```bash
+psql -c "CREATE DATABASE chesser;"
+psql -d chesser -c "CREATE EXTENSION vector;"
+```
+
+You will need pgvector installed, which often means building it from source
+against your local PostgreSQL headers. The container exists to avoid exactly
+this step.
+</details>
+
+### 2. Install chesser
 
 ```bash
 uv tool install .          # or: pipx install .
 ```
 
-For development, an editable install in a virtualenv:
+<details>
+<summary>Development install</summary>
 
 ```bash
 uv venv && uv pip install -e ".[dev]"
 ```
+</details>
 
-### 2. Set up the database
-
-```bash
-# Create database and enable pgvector
-psql -c "CREATE DATABASE chesser;"
-psql -d chesser -c "CREATE EXTENSION vector;"
-```
-
-`chesser data` creates the tables itself on first run, so this is only the
-database and the extension.
-
-### 3. Pull Ollama models
+### 3. Pull the models
 
 ```bash
 ollama pull nomic-embed-text   # embeddings
-ollama pull llama3.2           # chat (or your preferred model)
+ollama pull llama3.2           # chat
 ```
 
-### 4. Set environment variables
+Roughly 1.5 GB, and the slowest step on a cold machine. You can skip it entirely
+by using hosted providers for both roles — see [Providers](#providers).
+
+### 4. Point chesser at the database
 
 ```bash
-export DATABASE_URL="postgres://user:pass@localhost:5432/chesser"
+export DATABASE_URL="postgres://chesser:chesser@localhost:5432/chesser"
 ```
 
-### 5. Fetch and analyze games
+That URL matches `docker-compose.yml`. If you brought your own PostgreSQL, use
+its credentials instead.
+
+### 5. Analyze a month of games
 
 ```bash
 chesser data analyze <username> <year> <month>
 
-# Example: analyze January 2026 games
-chesser data analyze magnus 2026 01
+# Example
+chesser data analyze cdew4 2026 01
 ```
 
-The month keeps its leading zero. Expect roughly a second per game: every move
-is searched twice by Stockfish, which dominates the run.
+**The month needs its leading zero** — `01`, not `1`. Expect roughly a second
+per game: every move is searched twice by Stockfish, which dominates the run.
 
-### 6. Chat with your games
+### 6. Ask it something
 
 ```bash
 chesser chat <username> [chat-model]
 
 # Example
-chesser chat magnus llama3.2
+chesser chat cdew4
 ```
 
 The optional positional model is passed to whichever chat provider is selected,
 and it outranks `CHAT_MODEL` — so pass a model that provider actually offers.
+
+Good opening questions: *"What openings do I lose with most often?"*,
+*"Show me games where I threw a winning position"*, *"What should I study to
+improve fastest?"*
 
 ## Providers
 
@@ -231,11 +305,19 @@ chesser/
   models/      # Domain types
   search/      # Query parsing, filters, hybrid retrieval
 tests/
-testdata/golden/  # Regression suite frozen at the cutover — see its MANIFEST.md
+testdata/golden/    # Regression suite frozen at the cutover — see its MANIFEST.md
+docker-compose.yml  # Postgres + pgvector for local development
 ```
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: `ruff check`,
-`mypy --strict`, and `pytest` must all pass, and the corpus-backed tests need a
-database.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) — the short
+version is that `ruff check`, `mypy --strict`, and `pytest` must all pass, and
+the corpus-backed tests need a database.
+
+If you are looking for somewhere to start, `docs/opensource-readiness/01-roadmap.md`
+lists the outstanding work with the reasoning behind each item.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
