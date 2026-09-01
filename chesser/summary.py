@@ -10,7 +10,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from chesser.models import Game, GameSummaryData, MoveAnalysis, PhaseStats
+from chesser.models import (
+    Game,
+    GameSummaryData,
+    MoveAnalysis,
+    PhaseStats,
+    normalize_termination,
+)
 
 OPENING_END = 10  # moves 1-10
 MIDDLEGAME_END = 25  # moves 11-25
@@ -111,7 +117,7 @@ def extract_summary_data(
         biggest_swing_move=biggest_swing_move,
         was_winning=was_winning,
         was_losing=was_losing,
-        termination_type=game.termination_type(),
+        termination_type=normalize_termination(game.termination_type(), result),
         opponent_rating=opponent_rating,
     )
 

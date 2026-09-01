@@ -40,6 +40,7 @@ from chesser.models import (
     PlayerStats,
     RatingBandStats,
     TimeClassStats,
+    normalize_termination,
     rating_band,
 )
 from chesser.search.filters import GameFilters
@@ -801,9 +802,14 @@ class DB:
             _tally(band, player_won, player_lost, player_cpl)
 
             if termination_type:
-                stats.stats_by_termination[termination_type] = (
-                    stats.stats_by_termination.get(termination_type, 0) + 1
-                )
+                # Normalized before tallying, not before printing: the raw
+                # string names the winning player, so bucketing on it leaks a
+                # third party's handle into player_stats and from there into
+                # every aggregate prompt.
+                player_result = "won" if player_won else "lost" if player_lost else "drew"
+                key = normalize_termination(termination_type, player_result)
+                if key:
+                    stats.stats_by_termination[key] = stats.stats_by_termination.get(key, 0) + 1
 
         if games_with_cpl > 0:
             stats.avg_cpl = total_cpl / games_with_cpl

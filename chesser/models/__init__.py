@@ -6,7 +6,7 @@ from chesser.models.analysis import (
     PhaseStats,
     YearMonth,
 )
-from chesser.models.game import Game, Player
+from chesser.models.game import Game, Player, normalize_termination
 from chesser.models.player_stats import (
     ColorStats,
     OpeningStats,
@@ -30,5 +30,6 @@ __all__ = [
     "RatingBandStats",
     "TimeClassStats",
     "YearMonth",
+    "normalize_termination",
     "rating_band",
 ]

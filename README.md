@@ -208,10 +208,15 @@ half.
 summaries and Chess.com username to a third party. The startup banner says so
 whenever a hosted provider is active.
 
-> **Known gap.** It also sends *other players'* usernames. Chess.com's
-> termination strings embed the opponent's handle ("Bolzman0 won by
-> resignation"), and those reach the prompt verbatim in the "Game endings"
-> section. See [readiness P0-8](docs/opensource-readiness/01-roadmap.md).
+Opponents' usernames are **not** sent. Chess.com's termination strings embed the
+winner's handle ("Bolzman0 won by resignation"), so those are normalized to the
+outcome and method — "lost by resignation" — before they reach the prompt or a
+stored summary. Anything in an unrecognized format collapses to "lost by other
+means" rather than being passed through.
+
+If you ingested games before this change, run `chesser data refresh-stats
+<username>` to rebuild the aggregates. Summaries written earlier still carry the
+old text until they are regenerated.
 
 Failures are reported, never silently retried on another provider: an Anthropic
 error answered from `llama3.2` would leave you comparing outputs without knowing

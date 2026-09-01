@@ -35,8 +35,10 @@ rather than deleted, so the audit's findings stay traceable to their resolution.
 | P2-7 Linting (half) | **Done** | `ruff check` in CI. *Dependency vulnerability scanning is still open* — see P2-7 below |
 | P4-3 Promote the engine package | **Moot** | The reusable part was the UCI wrapper, and that is now `python-chess`'s job, not ours |
 | P4-4 Swappable LLM backend | **Done** | `chesser/llm/` protocols with three adapters and a conformance suite |
+| P0-8 Opponent usernames | **Done** 2026-08-31 | `normalize_termination` in `chesser/models/game.py`, applied at both leak paths; `tests/test_termination.py` |
 
-**What this leaves.** One P0, and it is the one the rewrite deliberately did not touch.
+**What this leaves.** No P0s. The last one, P0-8, was closed on 2026-08-31 — see below for what it
+turned out to involve.
 
 ---
 
@@ -79,46 +81,32 @@ before the file lands.
 
 ---
 
-### P0-8 · Stop sending opponents' usernames to hosted providers
+### P0-8 · Stop sending opponents' usernames to hosted providers — **DONE 2026-08-31**
 
-*(Filed 2026-08-29, during the Python rewrite's prompt-determinism audit. Carried across the port
-unchanged, deliberately: the rewrite's rule was that a prompt change lands before the golden capture or
-after the cutover, never in between.)*
+**What it was.** `chesser/chat/router.py` emitted the "Game endings" section one line per distinct
+`termination_type`, and Chess.com's termination strings embed the winner's username. Two problems in
+one section: a disclosure the README's promise did not cover, and an aggregation that never aggregated
+— **90 distinct values across 195 games**, nearly all of them a single game.
 
-**Problem.** `chesser/chat/router.py:203-206` emits the "Game endings" section one line per distinct
-`termination_type`, and Chess.com's termination strings **embed the opponent's username**:
-`"Bolzman0 won by resignation"`, `"AlexanderZapata37811 won by resignation"`. On a 74-game corpus that is
-51 distinct values — 51 prompt lines, nearly all of them a different third party's handle, sent verbatim
-to Anthropic or OpenAI on every aggregate query.
+**What the fix turned out to involve.** The audit named one leak path. There were **two**:
 
-Two distinct problems in one section:
+1. The aggregate section, as filed.
+2. **Every Game Summary** — `generate_summary` writes `Termination type: {termination_type}.` into
+   `summary_text`, which is retrieved and placed in the prompt as context. The original note claimed
+   summaries were unaffected because "the opponent's name is already implied by the game itself." That
+   is wrong: the summary is otherwise anonymous — result, colour, time class, opening, blunder counts,
+   opponent *rating* — so the handle appeared nowhere else in it and was genuinely new information.
 
-1. **Disclosure.** The README and the startup banner promise that a hosted provider receives "your game
-   summaries and your Chess.com username." They do not mention *other players'* usernames, and those
-   people never chose this tool. The promise as written is inaccurate. The README now carries a "Known
-   gap" admission pointing here, which is honest but is not a fix.
-2. **Prompt bloat with near-zero signal.** Because the username is part of the key, every opponent forms
-   their own bucket, so the aggregation never aggregates: dozens of rows of `1 (1.4%)` where the useful
-   signal is the handful of *categories* — resignation, checkmate, timeout, abandonment, stalemate,
-   repetition — and whether the player won or lost by each.
+**How.** `normalize_termination(termination, result)` in `chesser/models/game.py` reduces a string to
+outcome-and-method from the player's own perspective: "Bolzman0 won by resignation" → "lost by
+resignation". Applied at the aggregation site in `chesser/db/__init__.py` (which fixes the prompt and
+`chesser data refresh-stats` together) and in `chesser/summary.py`. Unrecognized shapes collapse to
+"<result> by other means" rather than passing through, because an unparsed string is exactly where a
+handle might still hide.
 
-**Fix.** Normalize the termination string into (outcome, method) before it reaches the prompt — "won by
-resignation: 9", "lost on time: 5" — keyed on whether the winner is the player, not on who the winner
-was. Consider whether `games.termination_type` should store the normalized form as well; retrieval and
-stats both want the category, not the raw string.
-
-**Effort.** S–M. The normalization is small; deciding whether to also change what is stored is the part
-worth thinking about.
-
-**Risk/tradeoff.** Changes assembled prompts, so it interacts with
-[`../multi-provider/03-eval-plan.md`](../multi-provider/03-eval-plan.md) — re-run the question set after.
-**New constraint since the cutover:** it also invalidates `testdata/golden/prompts/`, which cannot
-currently be regenerated. See sequencing constraint 2. It is a strict improvement to signal density, so
-answers should get better, not merely different.
-
-**Note.** The per-game summaries are unaffected: `chesser/summary.py` prints the termination for a single
-game, where the opponent's name is already implied by the game itself. This is specifically about the
-aggregate section.
+**Operator action for an existing corpus.** `chesser data refresh-stats <username>` rebuilds the
+aggregates. Summaries written before the change keep the old text until regenerated, then re-embedded.
+A fresh clone is unaffected.
 
 ---
 

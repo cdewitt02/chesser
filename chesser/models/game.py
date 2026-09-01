@@ -100,3 +100,67 @@ class Game:
 
     def termination_type(self) -> str:
         return self._pgn_header("Termination")
+
+
+# Chess.com's termination strings embed the winner's username — "Bolzman0 won by
+# resignation". Three things follow, and only the first is obvious:
+#
+#   1. Disclosure. That handle belongs to a third party who never chose this
+#      tool, and it reaches a hosted Chat Provider verbatim.
+#   2. It never aggregates. Because the username is part of the key, every
+#      opponent forms their own bucket: 90 distinct values across 195 games,
+#      nearly all of them "1 (0.5%)".
+#   3. It carries no coaching signal. *How* the game ended is useful. *Who* it
+#      was against is not, in an aggregate.
+#
+# Draws are already anonymous ("Game drawn by agreement"); only decisive results
+# name a player.
+
+_WON_CONNECTORS = (
+    (" won by ", "by"),
+    (" won on ", "on"),
+    (" won - game ", "by"),
+)
+_DRAWN_CONNECTOR = "drawn by "
+
+
+def normalize_termination(termination: str, result: str) -> str:
+    """Reduce a termination string to (outcome, method) from the player's side.
+
+    `result` is the player's own outcome — "won", "lost", or "drew" — so the key
+    is what happened to *them*, not who the winner was. "Bolzman0 won by
+    resignation" becomes "lost by resignation" for the player who resigned and
+    "won by resignation" for the one who did not.
+
+    Anything unrecognized collapses to "<result> by other means" rather than
+    passing through. That is deliberate: an unparsed string is exactly the case
+    where a username might still be embedded, so the fallback must not echo it.
+    """
+    raw = termination.strip()
+    if not raw:
+        return ""
+
+    method = ""
+    verb = "by"
+    lowered = raw.lower()
+
+    for connector, connector_verb in _WON_CONNECTORS:
+        index = lowered.find(connector)
+        if index != -1:
+            method = raw[index + len(connector) :].strip().lower()
+            verb = connector_verb
+            break
+    else:
+        index = lowered.find(_DRAWN_CONNECTOR)
+        if index != -1:
+            method = raw[index + len(_DRAWN_CONNECTOR) :].strip().lower()
+
+    if not method:
+        return f"{result} by other means"
+
+    # "won - game abandoned" reads as a method of "abandoned"; name it as one.
+    if method == "abandoned":
+        method = "abandonment"
+
+    outcome = "drawn" if result == "drew" else result
+    return f"{outcome} {verb} {method}"
