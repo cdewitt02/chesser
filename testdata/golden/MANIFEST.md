@@ -89,23 +89,25 @@ the date filter currently selects the whole corpus regardless of when the harnes
 runs. That will stop being true once the corpus contains rows older than
 60 days — at which point `prompts/09.txt` needs recapturing.
 
-## Regenerating
+## Regenerating — you cannot, yet
 
-```sh
-cd legacy && . ../.env && go run ./cmd/golden cdew4
-```
+**`legacy/` and its `cmd/golden` capture tool were deleted after the port was validated**
+([ADR 0002](../../docs/adr/0002-python-rewrite.md)). These files are the last output of the Go
+implementation and nothing in the tree can reproduce them.
 
-Requires Postgres, Stockfish (for `analysis.json`), and Ollama (for `prompts/`). It runs from `legacy/`
-because that is where the Go implementation lives after the cutover — see
-[ADR 0002](../../docs/adr/0002-python-rewrite.md).
+That changes what they mean. They are no longer a cross-language reference; they are a
+Python-vs-Python regression suite frozen at the cutover — still the only coverage `summary`, `engine`,
+`chat`, and `search` have for their exact output, but from here a diff means "the Python tree changed",
+not "the two implementations disagree".
 
-**When `legacy/` is deleted, these stop being a cross-language reference.** They become a
-Python-vs-Python regression suite frozen at the cutover, which is still worth having — it is the only
-coverage `summary`, `engine`, `chat`, and `search` have for their exact output — but from that point a
-diff means "the Python tree changed", not "the two implementations disagree". Regenerate with a small
-Python harness at that point, and say so here when you do.
+Recapturing requires **writing a Python capture tool first** (a Phase 8 item in
+[`docs/python-rewrite/00-plan.md`](../../docs/python-rewrite/00-plan.md)). It would need Postgres,
+Stockfish (for `analysis.json`), and Ollama (for `prompts/`), and it must reproduce these files
+byte-for-byte before it is trusted to replace them. Treat that as a deliberate change with its own
+verification — never as a way to clear a failing test. Record it here when it exists.
 
-The capture also re-derives every summary from stored `games` and `moves` rows
-and compares it against the stored `summary_text`. A mismatch is reported loudly:
-it means the Go tree has drifted from what produced the stored embeddings, and
-the goldens would freeze that drift. At the capture commit, **74 of 74 match**.
+The Go capture also re-derived every summary from stored `games` and `moves` rows
+and compared it against the stored `summary_text`. A mismatch was reported loudly:
+it meant the Go tree had drifted from what produced the stored embeddings, and
+the goldens would freeze that drift. At the capture commit, **74 of 74 matched** —
+a property any Python replacement should reproduce.

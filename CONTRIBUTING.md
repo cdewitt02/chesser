@@ -48,23 +48,24 @@ would reproduce faithfully and wrongly.
 
 ## The goldens
 
-`testdata/golden/` is the parity reference from the Python rewrite, and it is
+`testdata/golden/` began as the parity reference from the Python rewrite and is
 now the regression suite for the packages that never had one. **Read
-[`testdata/golden/MANIFEST.md`](testdata/golden/MANIFEST.md) before regenerating
-anything** — a golden regenerated from the current tree always matches the
+[`testdata/golden/MANIFEST.md`](testdata/golden/MANIFEST.md) before touching
+anything in it** — a golden regenerated from the current tree always matches the
 current tree and proves nothing.
 
-Two of the five files are gitignored because they derive from one person's real
-corpus and embed other players' usernames. Regenerate them locally:
+**They are frozen at the cutover and there is no capture tool.** The Go
+implementation that produced them was deleted, so they are no longer a
+cross-language reference: they are a Python-vs-Python regression suite pinned to
+the behavior that shipped. Regenerating any of them now requires first writing a
+Python capture tool, which is a deliberate change with its own verification, not
+a step you take to make a red test green.
 
-```bash
-cd legacy && . ../.env && go run ./cmd/golden <username>
-```
-
-That runs the *Go* implementation, which is the point: it is what makes the
-files a cross-language reference. Once `legacy/` is deleted they become a
-Python-vs-Python regression suite frozen at the cutover, which is still worth
-having — see the manifest.
+Three of the five files are gitignored because they derive from one person's
+real corpus and embed other players' usernames (readiness P0-8):
+`summaries.json`, `analysis.json`, and `prompts/`. A fresh clone will not have
+them, and the tests that need them skip with a message saying so — that is
+expected, not a broken checkout.
 
 ## Two preserved defects
 

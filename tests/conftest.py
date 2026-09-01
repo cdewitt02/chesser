@@ -50,7 +50,8 @@ def corpus_username() -> str:
     manifest = GOLDEN_DIR / "prompts" / "manifest.json"
     if not manifest.exists():
         pytest.skip(
-            "corpus goldens are gitignored; regenerate with: go run ./cmd/golden <username>"
+            "corpus goldens are gitignored and are not present; "
+            "see testdata/golden/MANIFEST.md for what it takes to recapture them"
         )
     return str(json.loads(manifest.read_text())["username"])
 
@@ -60,7 +61,8 @@ def prompt_manifest() -> dict[str, Any]:
     manifest = GOLDEN_DIR / "prompts" / "manifest.json"
     if not manifest.exists():
         pytest.skip(
-            "corpus goldens are gitignored; regenerate with: go run ./cmd/golden <username>"
+            "corpus goldens are gitignored and are not present; "
+            "see testdata/golden/MANIFEST.md for what it takes to recapture them"
         )
     result: dict[str, Any] = json.loads(manifest.read_text())
     return result
@@ -71,7 +73,8 @@ def summary_goldens() -> list[dict[str, Any]]:
     path = GOLDEN_DIR / "summaries.json"
     if not path.exists():
         pytest.skip(
-            "corpus goldens are gitignored; regenerate with: go run ./cmd/golden <username>"
+            "corpus goldens are gitignored and are not present; "
+            "see testdata/golden/MANIFEST.md for what it takes to recapture them"
         )
     result: list[dict[str, Any]] = json.loads(path.read_text())
     return result

@@ -513,7 +513,8 @@ what makes that safe.
    that the process runs, streaming renders, and nothing crashes. Name it that in the release notes so
    nobody later mistakes it for evidence of answer quality.
 2. Move the Go tree to `legacy/` in one commit, delete it in a later one. Two commits, so the revert is
-   trivial for as long as anyone wants it.
+   trivial for as long as anyone wants it. *(Done. Moved in `71211ca`; deleted 2026-08-31, ahead of the
+   "one release" wait ADR 0002 described — see that ADR's 2026-08-31 amendment.)*
 3. Rebuild what was deliberately skipped: README quick-start, CONTRIBUTING with a Python testing matrix,
    and CI running `ruff`, `mypy --strict`, and `pytest` — the P1-2 work, now against the right language.
 4. Record the decision as **ADR 0002**. It meets the bar: hard to reverse, and the reasoning is
@@ -540,9 +541,12 @@ what makes that safe.
   unreachable — so fixing it changes more stored text than any other item here, and every later change
   is cheaper once the regeneration pass has been done once.
 
-- **Regenerating the goldens as a Python-native harness**, once `legacy/` is deleted. Until then they
-  are captured by the Go tree, which is what makes them a cross-language reference; after, they need a
-  small Python capture tool. See `testdata/golden/MANIFEST.md`.
+- **Regenerating the goldens as a Python-native harness.** **Now unblocked and now blocking:** `legacy/`
+  was deleted on 2026-08-31, so the Go capture tool is gone and *nothing* can reproduce
+  `testdata/golden/`. Until a small Python capture tool exists, every golden is frozen — which is fine
+  while behavior is frozen, but it gates the two Preserved Defect fixes below, since both change Game
+  Summary text and therefore need a recapture. Build it before you take those on, and require it to
+  reproduce the existing files byte-for-byte first. See `testdata/golden/MANIFEST.md`.
 
 - **[Readiness P0-8](../opensource-readiness/01-roadmap.md).** Deferred to *after* cutover under the
   plan's own rule — a change to the Assembled Prompt lands before the capture or after the cutover,

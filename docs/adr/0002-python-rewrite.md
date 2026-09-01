@@ -1,6 +1,6 @@
 # ADR 0002 — Rewrite the application in Python, keeping the database untouched
 
-**Status:** Accepted · 2026-08-29
+**Status:** Accepted · 2026-08-29 · amended 2026-08-31 (see [Amendment](#amendment--2026-08-31))
 
 ## Context
 
@@ -125,8 +125,46 @@ Test coverage went up rather than down. `internal/db`, `internal/chat`, `interna
 
 **`legacy/` stays for one release.** It is not a fallback — the Python tree owns the database — but it is
 what regenerates the goldens from the implementation that produced them, and it keeps the cutover
-revertible. See [`legacy/README.md`](../../legacy/README.md) for when to delete it and what changes when
-it goes.
+revertible. *(Superseded: it was deleted on 2026-08-31 without a release being cut. See the
+[Amendment](#amendment--2026-08-31).)*
+
+---
+
+## Amendment — 2026-08-31
+
+**`legacy/` has been deleted**, two days after the cutover and without the release this ADR said it
+would wait for. The Consequences section above is left as written; this records what actually happened
+and what it cost.
+
+**Why now.** The condition in `legacy/README.md` — a real ingestion cycle and some chat sessions
+without surprises — was judged met on the strength of the validation table above plus manual testing of
+the ingest, provenance, and chat paths. "One release" was never satisfied, because no release has been
+cut; that condition was dropped deliberately rather than met.
+
+**What it cost, precisely.** Two things, both known and accepted:
+
+1. **The goldens stop being a cross-language reference.** `cmd/golden` went with the directory, so
+   `testdata/golden/` is now the last output of an implementation that no longer exists. Three of the
+   five files are gitignored and therefore live on one machine only. From here a golden diff means "the
+   Python tree changed", never "the two implementations disagree". `testdata/golden/MANIFEST.md` states
+   this at the point of use.
+2. **The cutover is no longer revertible by `git revert`.** It is still recoverable — the Go tree is
+   intact at commit `71211ca` and its parents — but recovery is now an explicit archaeology step rather
+   than a one-command undo.
+
+**What did not change.** Nothing operational. `legacy/` was never built or tested by CI, nothing outside
+it imported it, and the Python tree already owned the database. No runtime behavior depends on this
+commit.
+
+**A Python capture tool is now the blocking prerequisite** for any future golden recapture, and it was
+already a Phase 8 item in [`docs/python-rewrite/00-plan.md`](../python-rewrite/00-plan.md). Until it
+exists, the goldens are frozen: regenerating one is impossible rather than merely discouraged, which is
+a stricter and in some ways safer position than the one this ADR described.
+
+**Historical references to Go are kept on purpose.** This ADR, [ADR 0001](./0001-postgres-in-docker-over-sqlite.md),
+and the rewrite plan all cite `internal/*.go` paths. They are records of decisions made when that code
+existed and are not edited to pretend otherwise. Working documents that pointed contributors at a
+runnable Go command were updated, because those were instructions rather than history.
 
 ## Alternatives considered
 

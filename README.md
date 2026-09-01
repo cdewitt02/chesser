@@ -200,8 +200,7 @@ chesser/
   models/      # Domain types
   search/      # Query parsing, filters, hybrid retrieval
 tests/
-testdata/golden/  # Parity reference — see its MANIFEST.md
-legacy/           # The superseded Go implementation; see ADR 0002
+testdata/golden/  # Regression suite frozen at the cutover — see its MANIFEST.md
 ```
 
 ## Contributing

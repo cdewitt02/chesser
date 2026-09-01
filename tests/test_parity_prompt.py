@@ -159,7 +159,8 @@ def _check_fingerprint(db: DB, prompt_manifest: dict[str, Any]) -> None:
             f"corpus changed, recapture required: fingerprint {fingerprint} "
             f"({len(uuids)} games) vs golden {prompt_manifest['corpus_fingerprint']} "
             f"({prompt_manifest['game_count']} games). "
-            f"Rerun: go run ./cmd/golden {prompt_manifest['username']}"
+            "These prompts are whole-corpus goldens frozen at the cutover and "
+            "there is no capture tool any more; see testdata/golden/MANIFEST.md"
         )
 
 
