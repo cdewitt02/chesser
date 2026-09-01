@@ -4,75 +4,58 @@ Decisions that need a maintainer call before the corresponding roadmap work star
 
 Ordered by what blocks the earliest roadmap work.
 
+**Remapped to Python on 2026-08-31** ([ADR 0002](../adr/0002-python-rewrite.md)). Three of the original
+eight questions were answered or made moot by the rewrite and are recorded as such at the bottom rather
+than deleted — a question that stops being asked should say why.
+
 ---
 
 ## Q1 · Which license?
 
 **Blocks:** P0-2 — and transitively every other contribution, since without a license nobody may legally fork or modify the code.
 
-**Why it is a real question.** Both realistic options are permissive and neither is wrong. The difference is narrow but not zero:
+**Why it is a real question.** Both realistic options are permissive and neither is wrong:
 
-- **MIT** — shortest, most common in Go CLI tooling, near-universally understood. No explicit patent grant.
+- **MIT** — shortest, near-universally understood. No explicit patent grant.
 - **Apache-2.0** — adds an express patent grant and a trademark clause. Common where corporate contribution or adoption is expected; slightly heavier to read.
 
-There is no meaningful copyleft option under consideration given the intent to make this usable, and all three dependencies (pgx, notnil/chess, pgvector-go) are permissively licensed and constrain nothing.
+**What changed with the rewrite.** The dependency set is entirely different — the audit's reasoning cited
+pgx, notnil/chess, and pgvector-go, none of which exist here any more. The current runtime dependencies
+are `anthropic`, `chess`, `openai`, `pgvector`, `prompt-toolkit`, `psycopg`, `requests`, `rich`, and
+`typer`. They are uniformly permissive (MIT / Apache-2.0 / BSD) and still constrain nothing, but the
+conclusion should be re-verified rather than inherited.
 
-**What makes it consequential.** Practically irreversible. Relicensing after contributions arrive requires consent from every contributor, which in practice means it does not happen. This deserves twenty minutes of thought, not a coin flip — but also not a week.
+One new wrinkle: `pyproject.toml:7` currently declares `license = { text = "UNLICENSED" }`. That is not a
+neutral absence — it is a positive claim, and it is baked into the metadata of any wheel built today. It
+has to change with the same commit that adds the file.
+
+**What makes it consequential.** Practically irreversible. Relicensing after contributions arrive requires consent from every contributor, which in practice means it does not happen.
 
 **Recommendation: MIT.** It matches the ecosystem norm for a project of this size and shape, and the patent-grant advantage of Apache-2.0 has little purchase on a chess analysis tool. Choose Apache-2.0 only if corporate adoption is a specific goal.
 
 ---
 
-## Q2 · Is `NUM_WORKERS` supposed to default to 4 or 8?
-
-**Blocks:** P0-4 — the fix differs depending on the answer.
-
-**Why it is a real question.** The README says `8 (4 for less compute)`; `cmd/data/main.go:112` returns `4`. This is not obviously a documentation bug — the phrasing reads like the default *was* 8 and was deliberately lowered, in which case the README is stale rather than wrong-by-typo. Only the maintainer knows which of the two reflects current intent.
-
-It matters because each worker spawns its own Stockfish process at depth 12 (`cmd/data/worker.go:141`, `cmd/data/main.go:22`). On a 4-core machine, 8 workers oversubscribes badly; on a 16-core machine, 4 leaves most of the box idle. The parenthetical also reads as advice rather than a value, which is itself worth cleaning up.
-
-**Recommendation:** keep the code's `4` as a conservative default that works on modest hardware, fix the README to match, and add the `NUM_WORKERS` tuning guidance from P3-3 so users with more cores know to raise it. A hardware-aware default (`runtime.NumCPU()`) is tempting but would be a behavior change; if desired, do it deliberately rather than as part of a doc fix.
-
----
-
 ## Q3 · Does Docker Compose become the primary onboarding path, or sit alongside native install?
 
-**Blocks:** P3-1, and shapes P1-3 (CONTRIBUTING) and P3-2 (Makefile).
+**Blocks:** P3-1, and shapes P3-2 (Makefile) and any CONTRIBUTING setup revision.
 
-**Why it is a real question.** Compose eliminates the worst onboarding step — building pgvector from source (audit §5.1) — but only for Postgres. Ollama and Stockfish stay native regardless: containerizing Ollama complicates GPU passthrough, and Stockfish wants host CPU. So the choice is between two imperfect stories:
+**Why it is a real question.** Compose eliminates the worst onboarding step — building pgvector from
+source — but only for Postgres. Ollama and Stockfish stay native regardless: containerizing Ollama
+complicates GPU passthrough, and Stockfish wants host CPU. So the choice is between two imperfect stories:
 
 - **Compose primary:** `docker compose up -d` replaces three steps, but the docs must explain that only *part* of the stack is containerized, and Docker becomes a prerequisite for the recommended path.
 - **Native primary, Compose as an alternative:** no new prerequisite, but the documented default keeps the step most likely to make people give up.
 
-Maintaining both paths in the docs is real ongoing cost — two sets of setup instructions that drift.
+**What changed with the rewrite.** Two things, both mildly favoring Compose. A Python app image no longer
+needs to be a *build* toolchain, so full-stack containerization is cheaper than it was under Go. And with
+`CHAT_PROVIDER=openai` and `EMBED_PROVIDER=openai`, Ollama leaves the prerequisite list entirely — meaning
+a Compose-plus-hosted-API path is now a genuine two-prerequisite story (Docker and Stockfish), which the
+Go tree could not offer.
 
-**Recommendation:** make Compose the **documented default** for the database only, with native install kept as a clearly-labeled alternative section. Be explicit up front that Ollama and Stockfish are host installs either way, so nobody expects a single-command full stack. The partial containerization is worth being loud about rather than discovering.
+Note also that ADR 0001 and ADR 0002 both already *describe* Compose as the documented on-ramp, and no
+`docker-compose.yml` exists. Whatever is decided, those documents and the tree currently disagree.
 
----
-
-## Q4 · Should `internal/engine` be promoted to a public package?
-
-**Blocks:** P4-3, and influences how P2-2's refactor is designed.
-
-**Why it is a real question.** `internal/engine` is genuinely the most reusable code here — a compact Stockfish UCI wrapper with CPL computation and move classification, coupled to chesser only via `models.MoveAnalysis`. Other Go chess projects plausibly want exactly this.
-
-Against that: a public package is a **maintenance commitment**. Breaking changes need a major version. And the current API is not one to freeze — `AnalyzeGame` takes a caller-owned `*uci.Engine` (`internal/engine/stockfish.go:87`), which would make `notnil/chess`'s API part of chesser's public contract transitively, and it has no `context.Context` on a loop running two engine calls per move. Both are near-impossible to fix after publication.
-
-The honest uncertainty is **demand**: publishing a package nobody imports is pure cost, and there is currently no evidence anyone wants it.
-
-**Recommendation:** do the **P2-2 refactor regardless** — extract the analyzer interface and add `context.Context`. That is worth doing purely for testability, and it happens to produce exactly the API a public package would need. Then **defer the promotion decision** until someone actually asks. This keeps the option open at no extra cost and avoids committing to a contract prematurely.
-
----
-
-## Q5 · Should the `gofmt` sweep use `.git-blame-ignore-revs`, and is anything in flight?
-
-**Blocks:** P1-1.
-
-**Why it is a real question.** The sweep touches 24 of 30 files and will pollute `git blame` for one commit. `.git-blame-ignore-revs` fixes that and GitHub honors it — but it is an extra file and an extra step, and some maintainers find it more ceremony than the problem warrants on a young project.
-
-The sharper half of the question: **is there any unpushed or in-flight work?** A repo-wide reformat invalidates every branch that predates it. The audit saw a clean tree at `2bcd4cb`, but that only covers this machine.
-
-**Recommendation:** add `.git-blame-ignore-revs` — it costs one file and one line, and `git blame` on the reformatted files is otherwise degraded permanently. Confirm no unpushed branches exist before running the sweep; if any do, land or discard them first.
+**Recommendation:** make Compose the **documented default for the database only**, with native install kept as a clearly-labeled alternative. Be explicit up front that Stockfish is a host install either way, and that Ollama is one unless both providers are hosted. The partial containerization is worth being loud about rather than discovering.
 
 ---
 
@@ -80,9 +63,18 @@ The sharper half of the question: **is there any unpushed or in-flight work?** A
 
 **Blocks:** P1-4 (the issue template's `config.yml` routes traffic based on this).
 
-**Why it is a real question.** Setup for this project is genuinely hard — Postgres, pgvector, Ollama, two models, Stockfish. A predictable share of early inbound will be "my setup doesn't work," which is support, not bug reports. Enabling Discussions routes that traffic away from Issues and keeps the bug tracker meaningful. But Discussions is a second inbox to monitor, and an unanswered Discussions tab signals neglect as loudly as an unanswered issue tracker.
+**Why it is a real question.** Setup for this project is genuinely hard — Postgres, pgvector, Stockfish,
+and either Ollama with two models or API keys for a hosted provider. A predictable share of early inbound
+will be "my setup doesn't work," which is support, not bug reports. Enabling Discussions routes that
+traffic away from Issues and keeps the bug tracker meaningful. But Discussions is a second inbox, and an
+unanswered Discussions tab signals neglect as loudly as an unanswered issue tracker.
 
-**Recommendation:** **issues-only initially**, with a well-built bug template (P1-4) that front-loads environment questions, plus the troubleshooting section (P3-4) to deflect the common cases. Enable Discussions only if support volume actually materializes. One neglected inbox is better than two.
+**What changed with the rewrite.** The support surface got *wider*, not narrower. Provider selection adds
+a whole class of question the audit never anticipated — wrong API key, a model the provider does not
+offer, and especially the index provenance guard, which refuses to start and will read as a bug. That
+argues for a strong troubleshooting section (P3-4) more than for a second inbox.
+
+**Recommendation:** **issues-only initially**, with a well-built bug template (P1-4) that front-loads environment *and provider* questions, plus the troubleshooting section (P3-4) to deflect the common cases. Enable Discussions only if support volume actually materializes. One neglected inbox is better than two.
 
 ---
 
@@ -96,14 +88,71 @@ The sharper half of the question: **is there any unpushed or in-flight work?** A
 
 ---
 
-## Q8 · Should the phase-boundary logic in `internal/summary` be verified before or during test-writing?
+## Q8 · Is the phase boundary counting plies or moves?
 
-**Blocks:** P2-1 — specifically, whether it is a test-writing task or a test-and-fix task.
+**Blocks:** the Preserved Defect work in [`../python-rewrite/00-plan.md`](../python-rewrite/00-plan.md)
+Phase 8. *(It formerly blocked P2-1, which is now done — see below.)*
 
-**Why it is a real question.** `ExtractSummaryData` categorizes moves by phase using `i < OpeningEnd` where `OpeningEnd = 10` (`internal/summary/generator.go:10, 104`). But `i` indexes **plies** (individual half-moves), while the constant's comment reads `// moves 1-10`. If "moves" means full moves, the boundary should be at ply 20, not 10 — meaning the "opening" phase currently covers only the first 5 full moves.
+**Why it is a real question.** `extract_summary_data` categorizes moves by phase using `i < OPENING_END`
+where `OPENING_END = 10` (`chesser/summary.py:15, 94`). But `i` indexes **plies** (individual half-moves),
+while the constant's comment still reads `# moves 1-10`. If "moves" means full moves, the boundary should
+be at ply 20, not 10 — meaning the "opening" phase currently covers only the first 5 full moves.
 
-This may well be intentional. It also may be an off-by-factor-of-two that has been silently skewing every phase statistic, every `weakestPhase` result, and therefore every generated summary and embedding.
+This may well be intentional. It also may be an off-by-factor-of-two that has been silently skewing every
+phase statistic, every `weakest_phase` result, and therefore every generated summary and embedding.
 
-**Why it needs a maintainer, not a fix.** Only the author knows which was meant. And if it is a bug, fixing it changes the meaning of already-stored summaries and embeddings — existing data would need regeneration to stay consistent with new data, which is a migration decision, not a code decision.
+**What changed with the rewrite — the question got sharper, not softer.** The audit could only say "this
+looks ambiguous." Three things are now known:
 
-**Recommendation:** answer this **before** writing the P2-1 tests, so they encode intended behavior rather than freezing current behavior. If it turns out to be a bug, note in the changelog (P4-2) that re-ingestion is recommended — and fold that in with the same guidance from the P0-6 embedding fix, since both point at the same remedy.
+1. **The behavior is confirmed identical to Go**, byte-for-byte across all 74 stored summaries. So
+   whatever this is, it is not a porting error — it is original intent or an original bug.
+2. **It sits next to two confirmed bugs.** The port surfaced two genuine defects in the same file, both
+   preserved on purpose and marked `PARITY:`. That a third oddity in `summary.py` turns out to be real is
+   now more plausible than it was.
+3. **The remedy is no longer vague.** The audit worried that fixing it would strand stored embeddings.
+   That is still true, but the fix path is now a known, bounded, documented sequence: regenerate summaries
+   from stored `games` and `moves` (no Stockfish), then `chesser data reembed`. It is the same path the
+   Preserved Defect fixes need.
+
+**Why it still needs a maintainer, not a fix.** Only the author knows which was meant. It is a
+specification question, and no amount of reading the code answers it.
+
+**Recommendation:** answer it **together with the Preserved Defects**, not separately. All three change
+Game Summary text, all three require the same regeneration pass, and doing them as one change means
+paying that cost once. Sequence it after the Python golden capture tool exists — otherwise there is no way
+to verify the new output against anything. If it is a bug, the CHANGELOG (P4-2) entry is the same
+"re-embedding required" note the other two need.
+
+---
+
+# Retired questions
+
+Kept for traceability. None of these were *answered by a maintainer decision* — the rewrite dissolved them.
+
+### Q2 · Is `NUM_WORKERS` supposed to default to 4 or 8? — **Resolved**
+
+The audit found the README saying `8 (4 for less compute)` while `cmd/data/main.go:112` returned `4`. The
+rewrite settled it in the recommended direction: `chesser/cli.py` defaults to `4` and the README's
+environment table now says `4` plainly, with no parenthetical advice masquerading as a value. The
+*guidance* half of the recommendation is still outstanding and lives in P3-3.
+
+A hardware-aware default (`os.cpu_count()`) remains available and remains a deliberate behavior change,
+not a doc fix. Nobody has asked for it.
+
+### Q4 · Should `internal/engine` be promoted to a public package? — **Moot**
+
+The question was whether to publish chesser's Stockfish UCI wrapper for other Go chess projects to import.
+That wrapper no longer exists: `python-chess`'s `SimpleEngine` replaced it during the rewrite, which is
+one of the two places the port genuinely deleted code rather than translating it. What remains in
+`chesser/engine.py` is CPL computation and move classification — chesser's own domain logic, with no
+general-purpose UCI layer under it to promote.
+
+The recommendation's substance was achieved anyway, by a different route: the analyzer *is* testable now
+(`tests/test_parity_engine.py`), which was the part worth doing regardless of publication.
+
+### Q5 · Should the `gofmt` sweep use `.git-blame-ignore-revs`? — **Moot**
+
+There was no sweep. The Python tree was formatted by `ruff format` from its first commit, so no repo-wide
+reformat ever landed and `git blame` was never polluted. The sharper half of the question — "is anything
+in flight that a reformat would invalidate?" — is worth remembering as a general habit before any future
+mechanical change, but it has no standing item.
