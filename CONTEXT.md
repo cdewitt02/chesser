@@ -31,8 +31,13 @@ meaningless. Provenance is what makes that detectable rather than silent.
 ## Pinned Default Model
 
 The specific model ID a provider defaults to, chosen deliberately and recorded, never a provider-managed
-"latest" alias. Pinning is what makes eval results comparable across time: under an alias, the same
-recorded label can mean two different models.
+"latest" alias. Under an alias the same recorded label can mean two different models, so a change in
+answers has no attributable cause: the code did not change, and neither did anything the user can see.
+
+Pinning was originally justified by keeping formal eval results comparable across time. That evaluation
+is not being run — model choice is left to the user — but pinning is unaffected, because its real subject
+is reproducibility rather than scoring. Anyone comparing models on their own corpus, or reporting a
+change in answer quality, needs to know which model actually produced the output.
 
 ## Ingestion
 

@@ -244,7 +244,9 @@ an accepted, deliberate asymmetry.
 - CONTRIBUTING (if it exists by then): what can be tested with no provider running. After Phases 1–4
   that answer is much better than it is today — the entire adapter layer is testable with `httptest`,
   and config resolution with an env map.
-- Cross-link [`03-eval-plan.md`](./03-eval-plan.md) as the next step.
+- ~~Cross-link [`03-eval-plan.md`](./03-eval-plan.md) as the next step.~~ **Dropped 2026-08-31** —
+  the evaluation is not being run and model choice is left to the user. The README's *Choosing a
+  chat model* section carries what a reader actually needs instead.
 
 ---
 

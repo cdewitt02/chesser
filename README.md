@@ -86,6 +86,37 @@ unchanged and the tool still runs with no account, no key, and no network.
 Default model IDs are **pinned, never aliased**: a server-side upgrade behind an
 alias would change answers with no code change and no way to notice.
 
+### Choosing a chat model
+
+**Start with the default.** Several chat models were compared informally against
+one real corpus and came out close enough that no provider stood out — the local
+`llama3.2` default included. There is no measured quality reason to reach for a
+hosted API first.
+
+That comparison is more meaningful than it sounds, because the prompt is
+deterministic: every provider receives byte-identical retrieved games,
+statistics, and instructions, so the model is the only thing that differs. It is
+still one person's games and one person's judgment, not a benchmark — which is
+exactly why the choice is left to you rather than baked into a recommendation.
+
+Reasons to switch that do **not** depend on answer quality:
+
+- **Hardware.** Local inference wants RAM and CPU that a small laptop or VM may
+  not have. A hosted chat provider moves that cost off your machine.
+- **Speed.** Hosted models generally return faster than local inference on
+  modest hardware.
+- **Dropping Ollama entirely.** Only `EMBED_PROVIDER=openai` does that, since
+  Anthropic has no embeddings API — and it means re-embedding your index.
+
+Reasons to stay local: no account, no API key, no per-query cost, and **nothing
+about your games leaves the machine**.
+
+Because chat and embeddings are selected independently, trying a different chat
+model is cheap and reversible — the index is untouched, so switching back costs
+nothing. Comparing on your own corpus is the only comparison that is really
+about your games; `docs/multi-provider/03-eval-plan.md` describes how to hold
+everything else constant if you want to do it properly.
+
 ### Using Anthropic for chat
 
 ```bash

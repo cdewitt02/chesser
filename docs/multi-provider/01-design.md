@@ -273,10 +273,13 @@ binary's default behavior stays account-free. Rationale and the open question in
 Each provider carries an explicit default model ID, recorded in the README table. **Do not point
 defaults at a provider's "latest" alias.**
 
-**The eval plan is what decides this.** [`03-eval-plan.md`](./03-eval-plan.md) depends on runs being
-comparable across time — that is why the question set is frozen. An alias lets a server-side model
-upgrade change eval results with no code change, no changelog entry, and no way to notice. A pinned ID
-that goes visibly stale is strictly better than one that drifts invisibly.
+**Reproducibility is what decides this.** An alias lets a server-side model upgrade change answers with
+no code change, no changelog entry, and no way to notice. A pinned ID that goes visibly stale is strictly
+better than one that drifts invisibly.
+
+*(This was originally justified by [`03-eval-plan.md`](./03-eval-plan.md) needing runs comparable across
+time. That evaluation is not being run — see its status header — and the conclusion is unchanged: the
+argument was always about attribution, and it now serves users comparing models on their own corpora.)*
 
 **Cost does not constrain the choice.** At ~3k input and ~500 output tokens per question (§8), any
 current-generation model costs a fraction of a cent per answer. Default to answer quality, not price.

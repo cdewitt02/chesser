@@ -1,5 +1,29 @@
 # Multi-Provider Support — Evaluation Plan
 
+> **Status: not being run. Decided 2026-08-31.**
+>
+> The formal comparison described below was **deliberately not carried out**, and no document should
+> treat it as pending work.
+>
+> **What replaced it.** Several chat models were run manually against the same corpus and found
+> comparable in quality, with no material drop from the local default. That observation is weaker than
+> the rubric below, but it is not merely impressionistic: because the Assembled Prompt is deterministic
+> and identical across providers, the retrieved games, aggregate statistics, and instruction block were
+> byte-for-byte the same in every run. The chat model genuinely was the only variable, which is the
+> property this plan was built to guarantee.
+>
+> **Why stop there.** The finding — no provider is clearly better — is the answer that makes a scored
+> comparison unnecessary rather than incomplete. Model preference for open-ended coaching prose is
+> partly taste, and a rubric score derived from one maintainer's 74 games would not transfer to another
+> player's corpus anyway. **Model choice is deliberately left to the user of the repository**, with the
+> local default documented as a genuinely adequate starting point (see the README's *Choosing a chat
+> model*).
+>
+> **What this document is still good for.** The question set in §2 remains a useful manual smoke-test
+> checklist — two questions per query type, exercising every classifier branch — and §1's controls are
+> the correct method for anyone who *does* want to run a scored comparison on their own corpus. The
+> file-and-line references throughout still point at the Go tree and would need remapping first.
+
 A lightweight way to compare answer quality across providers once
 [`02-migration-plan.md`](./02-migration-plan.md) lands. Deliberately small: a fixed question set, a
 human-judged rubric, and a spreadsheet. No scoring model, no eval framework, no new dependencies.
