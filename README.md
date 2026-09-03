@@ -44,37 +44,55 @@ Goodbye!
 That answer is built from 74 real analyzed games. Every number in it comes from
 your own database.
 
-## Prerequisites
+## Setup
 
-- **Docker** (recommended) or **PostgreSQL** with the
-  [pgvector](https://github.com/pgvector/pgvector) extension
+Four things have to be on the machine before the steps below:
+
+- **Docker** — or PostgreSQL with the
+  [pgvector](https://github.com/pgvector/pgvector) extension, if you would
+  rather run your own
 - **Python 3.11+**
-- **Stockfish** on your `PATH`, or `STOCKFISH_PATH` pointing at the binary
-- **Ollama** running locally — needed unless you point *both* chat and
-  embeddings at a hosted provider (see [Providers](#providers))
+- **[uv](https://docs.astral.sh/uv/getting-started/installation/)** or
+  **[pipx](https://pipx.pypa.io/stable/installation/)**, to install the command
+- **Stockfish** — `sudo apt install stockfish`, or `brew install stockfish`
 
-## Quick Start
+Then one decision, which is step 3 and nothing else: where the language models
+run.
 
-### 1. Start the database
+| | **Local** (Ollama) | **Hosted** (Anthropic / OpenAI) |
+|---|---|---|
+| Getting started | ~18 minutes of unattended download, ~1.5 GB | ~8–10 minutes of *active* work: account, billing, an API key |
+| Per question | free | billed per token |
+| Your games | never leave the machine | summaries and your username go to the provider |
+| Hardware | wants RAM and spare cores | none |
+
+Neither wins on answer quality in any way that has been measured — see
+[Choosing a chat model](#choosing-a-chat-model). Hosted reaches a first answer
+sooner; local needs no account, no key, and no network. Both are fully
+supported, and switching chat providers later is cheap and reversible.
+
+**Whichever you pick, expect fifteen minutes minimum before a first answer.**
+Ingestion runs Stockfish over every move at roughly a second per game, and no
+choice here changes that.
+
+### 1. Configure, and start the database
 
 ```bash
+cp .env.example .env
 docker compose up -d
 ```
 
-That is the whole database setup: the image ships pgvector, and the extension is
-enabled on first start. Chesser creates its own tables when you first run it.
+Chesser reads that file from the working directory on every run — there is
+nothing to source. A variable already exported wins over the file, so a value
+set by hand is never overwritten.
 
-Already running PostgreSQL on port 5432? Pick another host port:
+The database needs no further setup: the image ships pgvector, the extension is
+enabled on first start, and chesser creates its own tables when you first run
+it.
 
-```bash
-CHESSER_DB_PORT=5433 docker compose up -d
-```
-
-The port then has to match in `DATABASE_URL` at step 4 as well — the container
-and chesser are configured independently, and nothing checks that they agree.
-Setting `CHESSER_DB_PORT` in `.env` instead of on the command line keeps them in
-step: `docker compose` reads that file, and `.env.example` builds `DATABASE_URL`
-from the same variable.
+Already running PostgreSQL on port 5432? Change `CHESSER_DB_PORT` in `.env`.
+Docker Compose reads the same file, and `DATABASE_URL` is built from that same
+variable, so both sides move together — and `chesser doctor` compares them.
 
 <details>
 <summary>Using your own PostgreSQL instead</summary>
@@ -101,26 +119,61 @@ uv tool install .          # or: pipx install .
 ```bash
 uv venv && uv pip install -e ".[dev]"
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the checks a change has to pass.
 </details>
 
-### 3. Pull the models
+### 3. Choose where the models run
+
+**Local** is the default, and needs no change to `.env`:
 
 ```bash
 ollama pull nomic-embed-text   # embeddings
 ollama pull llama3.2           # chat
 ```
 
-Roughly 1.5 GB, and the slowest step on a cold machine. You can skip it entirely
-by using hosted providers for both roles — see [Providers](#providers).
-
-### 4. Point chesser at the database
+**Hosted** — set these two in `.env`. OpenAI is the only provider that serves
+both roles, so it is the only one that takes Ollama off the list entirely:
 
 ```bash
-export DATABASE_URL="postgres://chesser:chesser@localhost:5432/chesser"
+OPENAI_API_KEY=sk-...
+CHAT_PROVIDER=openai
+EMBED_PROVIDER=openai
 ```
 
-That URL matches `docker-compose.yml`. If you brought your own PostgreSQL, use
-its credentials instead.
+Chat and embeddings are selected independently, so mixed setups are ordinary
+rather than exotic — Anthropic for chat with embeddings left on Ollama, for
+instance. That combination still needs Ollama installed, because Anthropic
+offers no embeddings API. See [Providers](#providers).
+
+### 4. Check the setup
+
+```bash
+chesser doctor
+```
+
+```console
+[ ok ] environment file     /home/you/chesser/.env: 4 value(s) applied
+[ ok ] configuration        chat ollama / llama3.2
+                            embeddings ollama / nomic-embed-text
+[skip] credentials          no hosted provider is selected
+[ ok ] stockfish            Stockfish 16 at /usr/games/stockfish
+[ ok ] DATABASE_URL         postgres://chesser:***@localhost:5432/chesser
+[ ok ] database port        compose and DATABASE_URL both use 5432
+[ ok ] database             connected
+[ ok ] pgvector             installed
+[ ok ] corpus               no tables yet — chesser creates them on the first `chesser data analyze`
+[ ok ] chat provider        reachable, credentials and model accepted
+[ ok ] embeddings           reachable, credentials and model accepted
+
+11 ok
+
+Nothing is blocking a run. Next: chesser data analyze <username> <year> <month>
+```
+
+It runs every check the real commands run, reports all of them rather than
+stopping at the first, and changes nothing. Credentials are redacted, so the
+output is safe to paste into an issue. It exits non-zero if anything failed.
 
 ### 5. Analyze a month of games
 
@@ -149,6 +202,14 @@ and it outranks `CHAT_MODEL` — so pass a model that provider actually offers.
 Good opening questions: *"What openings do I lose with most often?"*,
 *"Show me games where I threw a winning position"*, *"What should I study to
 improve fastest?"*
+
+## If something goes wrong
+
+Run `chesser doctor`. It names the failing check and the remedy, and it reports
+everything that is wrong in one pass rather than one failure per attempt.
+
+[`docs/troubleshooting.md`](docs/troubleshooting.md) covers the failures that
+are correct-but-surprising, and the ones doctor can only point at.
 
 ## Providers
 
@@ -198,9 +259,9 @@ everything else constant if you want to do it properly.
 ### Using Anthropic for chat
 
 ```bash
-export ANTHROPIC_API_KEY="..."     # never committed; .env is gitignored
-export CHAT_PROVIDER=anthropic
-chesser chat magnus
+# in .env
+ANTHROPIC_API_KEY=sk-ant-...     # never committed; .env is gitignored
+CHAT_PROVIDER=anthropic
 ```
 
 Embeddings stay on Ollama, so **no re-embedding is needed** and the existing
@@ -209,8 +270,8 @@ model" an honest comparison. Ollama is still a prerequisite for the embedding
 half.
 
 **This sends data off-machine.** Selecting a hosted provider sends your game
-summaries and Chess.com username to a third party. The startup banner says so
-whenever a hosted provider is active.
+summaries and Chess.com username to a third party. Both the startup banner and
+`chesser doctor` say so whenever a hosted provider is active.
 
 Opponents' usernames are **not** sent. Chess.com's termination strings embed the
 winner's handle ("Bolzman0 won by resignation"), so those are normalized to the
@@ -232,11 +293,10 @@ OpenAI is the only provider that serves both halves, so it is the one that can
 take Ollama off the prerequisite list entirely:
 
 ```bash
-export OPENAI_API_KEY="..."
-export CHAT_PROVIDER=openai
-export EMBED_PROVIDER=openai
-chesser data analyze magnus 2026 01
-chesser chat magnus
+# in .env
+OPENAI_API_KEY=sk-...
+CHAT_PROVIDER=openai
+EMBED_PROVIDER=openai
 ```
 
 `text-embedding-3-small` is asked for **768 dimensions**, which is the width the
@@ -247,9 +307,17 @@ index is refused at startup, naming the re-embed path (`chesser data reembed`).
 
 ## Environment Variables
 
+Chesser reads `.env` from the working directory on every run. Carriage returns
+are stripped, quoting and comments are parsed rather than word-split, and
+`${VAR}` references resolve against the whole file regardless of the order lines
+appear in. **Anything already exported wins over the file** — `chesser doctor`
+reports which values it declined to set for that reason.
+
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `DATABASE_URL` | PostgreSQL connection string | *required* |
+| `CHESSER_DB_PORT` | Host port `docker-compose.yml` publishes; `DATABASE_URL` is built from it | `5432` |
+| `CHESSER_ENV_FILE` | Read configuration from another path; set it empty to read no file at all | `.env` |
 | `CHAT_PROVIDER` | Chat provider: `ollama`, `anthropic`, or `openai` | `ollama` |
 | `CHAT_MODEL` | Chat model (positional CLI arg outranks it) | per provider |
 | `EMBED_PROVIDER` | Embedding provider: `ollama` or `openai` | `ollama` |
@@ -279,6 +347,8 @@ a terminal, `NO_COLOR` is set, or `TERM` reports a terminal that cannot render
 it. So `chesser chat magnus > notes.md` captures clean markdown rather than
 escape codes.
 
+`chesser doctor` is never styled: it is written to be pasted into an issue.
+
 ### Changing the embedding model
 
 The `game_summaries.embedding` column is `vector(768)`, and the provider and
@@ -300,9 +370,11 @@ chesser data reembed
 ```
 chesser/
   api.py       # Chess.com API client
-  cli.py       # The `chesser` command: data and chat subcommands
+  cli.py       # The `chesser` command: doctor, data and chat subcommands
   config.py    # Provider selection and startup validation
+  doctor.py    # `chesser doctor`: every startup check, run together
   engine.py    # Stockfish analysis via python-chess
+  envfile.py   # Reads .env, so the shell is not the configuration loader
   ingest.py    # The analysis worker pool
   repl.py      # Terminal chat loop
   summary.py   # Game Summary generation
@@ -317,195 +389,8 @@ chesser/
 tests/
 testdata/golden/    # Regression suite frozen at the cutover — see its MANIFEST.md
 docker-compose.yml  # Postgres + pgvector for local development
+docs/troubleshooting.md
 ```
-
-## Troubleshooting
-
-**`Error: invalid month '1': expected 01-12, with the leading zero`**
-Chess.com's URL needs two digits. Use `01`, not `1`. Rejected before any network
-request, so nothing is wasted.
-
-**`no games found for user "x" in 2026/01 — Chess.com returned 404`**
-Either the username is misspelled or that player has no games archived for that
-month. A 404 cannot tell those apart, which is why the message names both.
-
-**`Error: embedding provider mismatch: the index was built with ollama/...`**
-Working as designed, not a bug. Vectors from different embedding models are not
-comparable even at the same width, so retrieval would silently degrade rather
-than fail. Either restore the previous `EMBED_PROVIDER` and `EMBED_MODEL`, or
-re-embed:
-
-```bash
-chesser data reembed
-```
-
-That reads stored summary text and rebuilds vectors — no Stockfish, no
-re-analysis, so it is fast.
-
-**`Error: could not connect to the database after 30s`**
-The line under it is what PostgreSQL actually said, and it separates the two
-cases:
-
-- *Connection refused* — nothing is listening. Check `docker compose ps`; a
-  container that exited leaves the port empty.
-- *password authentication failed* — something answered, but it is not the
-  chesser container. Usually a native PostgreSQL already holds 5432, which also
-  stopped `docker compose up` from binding it. Publish another port and point
-  `DATABASE_URL` at it:
-
-  ```bash
-  CHESSER_DB_PORT=5433 docker compose up -d
-  export DATABASE_URL="postgres://chesser:chesser@localhost:5433/chesser"
-  ```
-
-Startup waits the full 30 seconds before giving up, because `docker compose up
--d` returns before PostgreSQL accepts connections — a first run that races a
-cold container retries rather than failing.
-
-**`Error: DATABASE_URL contains a control character`**, or **`invalid hostPort`**
-with nothing visible after the number
-The env file has Windows (CRLF) line endings. Sourcing it appends a carriage
-return to *every* value — including your API keys — and, because `DATABASE_URL`
-is built from `CHESSER_DB_PORT`, the CR lands in the middle of the connection
-string rather than at the end. Convert the file once:
-
-```bash
-sed -i 's/\r$//' .env      # or: dos2unix .env
-```
-
-`docker compose` reads that same file without complaining, because it trims
-whitespace from values and a shell does not. Compose can therefore be perfectly
-happy while every sourced variable is subtly wrong, so check the shell rather
-than the file:
-
-```bash
-printf '%q\n' "$CHESSER_DB_PORT"    # a bare number, or $'5433\r'?
-```
-
-If the file keeps reverting to CRLF — an editor on another machine, usually —
-source it through a filter instead of repeatedly fixing it:
-
-```bash
-. <(tr -d '\r' < .env)
-```
-
-**`Error: DATABASE_URL has an empty port`**
-`CHESSER_DB_PORT` is set *below* `DATABASE_URL` in the env file, so it had no
-value when the URL was built — which is what appending that line to a file you
-already had does. Move it above the line that uses it. Left alone this is
-particularly slow to diagnose: an empty port means 5432 to libpq, which on the
-machine that needed a different port is usually the very server you moved off,
-so the failure talks about credentials and never mentions the port.
-
-**Loading the env file**
-Source it — the file uses `export`, so that is all it needs:
-
-```bash
-. ./.env
-```
-
-`export $(cat .env | xargs)` is a common shortcut that does not work here: it
-splits the comments into arguments (`export: '#': not a valid identifier`),
-discards quoting, and does *not* strip carriage returns, so it fixes nothing
-that sourcing does not.
-
-**`invalid hostPort: 5433`** from `docker compose config` or `up`
-`CHESSER_DB_PORT` has a stray character — a trailing space, or a zero-width
-space picked up by copy-paste. Compose strips whitespace from values in the env
-file but *not* from the shell environment, so an exported variable is the usual
-culprit and the error prints nothing visible after the number. Show it exactly:
-
-```bash
-printf '%q\n' "$CHESSER_DB_PORT"
-```
-
-Anything other than a bare number is the problem. `unset CHESSER_DB_PORT` and
-set it again, or set it in the env file instead, where the whitespace is
-tolerated.
-
-**`FATAL:  database "chesser" does not exist`**
-The container is running and the credentials work — this is not a connection
-problem. The PostgreSQL image runs `POSTGRES_DB` *and* `docker/init-pgvector.sql`
-only on a first start with an empty data directory. A first `docker compose up`
-that was interrupted leaves the volume non-empty but incomplete, and from then
-on every start skips initialization: restarting, re-running `up`, and changing
-the port all leave it exactly as broken.
-
-Discard the volume so it initializes again. **This deletes any games you have
-already analyzed** — re-run `chesser data analyze` afterwards:
-
-```bash
-docker compose down -v
-docker compose up -d
-```
-
-`down -v` is what distinguishes this from `down`, which keeps the volume and so
-changes nothing.
-
-**`failed to bind host port 0.0.0.0:5432: address already in use`**
-Something else — usually a native PostgreSQL — already holds the port.
-
-```bash
-CHESSER_DB_PORT=5433 docker compose up -d
-export DATABASE_URL="postgres://chesser:chesser@localhost:5433/chesser"
-```
-
-**`Error: DATABASE_URL environment variable is required`**
-Nothing loads `.env` automatically. Source it, or export the variable:
-
-```bash
-. ./.env
-```
-
-Note that sourcing it *overwrites* a `DATABASE_URL` you exported by hand, which
-is the usual reason a port change appears not to take. Check what is actually in
-effect rather than what you last typed:
-
-```bash
-echo "$DATABASE_URL"
-docker compose ps    # PORTS names the published one
-```
-
-**Ollama connection refused, or a model 404**
-Check `ollama list` — the chat model and `nomic-embed-text` both need pulling.
-Startup checks run before the banner, so this surfaces immediately rather than
-after your first question.
-
-**`Error: Stockfish not found`**
-Either install it so it lands on `PATH`, or say where it is:
-
-```bash
-sudo apt install stockfish      # Debian/Ubuntu
-brew install stockfish          # macOS
-
-export STOCKFISH_PATH=/usr/games/stockfish   # or wherever yours is
-```
-
-`STOCKFISH_PATH` is usually the easier of the two, because it goes in the env
-file alongside everything else rather than in a shell profile.
-
-Note that `apt` installs the binary to **`/usr/games`**, which is on the `PATH`
-of a login shell but frequently not otherwise — so Stockfish can be installed
-and still not be found. `command -v stockfish` tells you which case you are in.
-
-Only `chesser data analyze` needs the engine; chatting does not. The check runs
-before the games are fetched, so a missing engine costs nothing.
-
-**Missing API key for a hosted provider**
-`ANTHROPIC_API_KEY` for `CHAT_PROVIDER=anthropic`, `OPENAI_API_KEY` for either
-role set to `openai`. Resolved before the welcome banner, so an auth failure is
-never revealed only after your first question.
-
-**Ingestion is slow**
-Expect roughly a second per game — every move is searched twice by Stockfish,
-which dominates the run. `NUM_WORKERS` (default 4) is the knob; each worker
-spawns its own Stockfish process, so raising it past your core count will not
-help.
-
-**Something else**
-Error output is redacted for passwords and API keys before printing, so it is
-safe to paste into an issue. Please include the environment the bug template
-asks for — most reports are unanswerable without it.
 
 ## Contributing
 

@@ -38,10 +38,10 @@ rather than deleted, so the audit's findings stay traceable to their resolution.
 | P0-8 Opponent usernames | **Done** 2026-08-31 | `normalize_termination` in `chesser/models/game.py`, applied at both leak paths; `tests/test_termination.py` |
 | P0-2 LICENSE | **Done** 2026-08-31 | MIT; `pyproject.toml` metadata corrected from `UNLICENSED` |
 | P3-5 README demo | **Done** 2026-08-31 | Real session at the top, banner copied from `chesser/repl.py` |
-| P3-1 Docker Compose | **Done** 2026-08-31 | `pgvector/pgvector:pg17` + an init script; `docker compose up -d` is the whole database setup |
+| P3-1 Docker Compose | **Partly done** 2026-08-31 | `pgvector/pgvector:pg17` + an init script. This is the *database half only* — see the corrected entry below |
 | P1-4 Issue/PR templates | **Done** 2026-08-31 | `.github/ISSUE_TEMPLATE/`, provider fields required |
 | P2-5 Credential redaction | **Done** 2026-08-31 | `redact_secrets`, plus a filter on psycopg's own pool logger — the path that actually leaked |
-| P3-4 Troubleshooting | **Done** 2026-08-31 | README section keyed to reproduced failures |
+| P3-4 Troubleshooting | **Done** 2026-08-31 | Keyed to reproduced failures; moved to [`../troubleshooting.md`](../troubleshooting.md) 2026-09-02 |
 
 **What this leaves.** No P0s. The last one, P0-8, was closed on 2026-08-31 — see below for what it
 turned out to involve.
@@ -254,22 +254,38 @@ direct dependencies first keeps it actionable.
 
 # P3 — Ease of adoption
 
-### P3-1 · Docker Compose for Postgres + pgvector
+### P3-1 · Docker Compose — **database half done, application half not built**
 
-**Problem.** Still the single worst onboarding step, and **unchanged by the rewrite** — installing pgvector
-commonly means building from source against local PG headers. Note that [ADR 0001](../adr/0001-postgres-in-docker-over-sqlite.md)
-and ADR 0002 both describe Compose as the documented on-ramp; no `docker-compose.yml` exists in the tree,
-so those documents currently describe an intent rather than a file.
+**Corrected 2026-09-02.** This item was marked Done on 2026-08-31. Only half of it had landed, and the
+half that did is the half [ADR 0001](../adr/0001-postgres-in-docker-over-sqlite.md) explicitly said was
+insufficient on its own.
 
-**Fix.** A ~15-line `docker-compose.yml` using `pgvector/pgvector:pg17`, with a named volume and the
-default `DATABASE_URL` documented alongside.
+**What shipped.** `docker-compose.yml` with `pgvector/pgvector:pg17`, a named volume, a healthcheck, and
+`docker/init-pgvector.sql`. This is the *original* P3-1 scope — Postgres only — and it does eliminate the
+pgvector source build.
 
-**Effort.** S. Highest onboarding-time-saved per line of anything in this document.
+**What did not.** ADR 0001 decided to **containerize the application as well**, and
+[`../multi-provider/04-onboarding.md`](../multi-provider/04-onboarding.md) §3 made that the target
+architecture (its row 6, ~31 minutes). There is no `Dockerfile` in the tree. What is running today is that
+document's **row 2** — "Compose for Postgres only", ~57 minutes — which §2.3 rejects by name:
 
-**Risk/tradeoff.** Whether Compose *replaces* native install as the documented default is a genuine
-decision — see Q3. The container covers Postgres only: Ollama and Stockfish stay native. **The rewrite
-changed this calculus slightly in Compose's favor** — a Python app image is no longer a build toolchain,
-so a full-stack Compose story is cheaper than it was under Go.
+> Row 2 moves 69 to 57. … **Neither track delivers an on-ramp by itself.** They have to land together.
+
+So the decision is recorded, the database half is built, and the tree still delivers the on-ramp the
+analysis rejected. That gap is what a maintainer setting up on a clean machine actually runs into.
+
+**Fix.** A `Dockerfile` for the app image with Stockfish installed, added as a service to the existing
+Compose file, and a wrapper for the REPL — §3 notes `chesser chat` is interactive and needs
+`docker compose run --rm -it`, "worth wrapping in a script rather than putting in front of a new user".
+That wrapper is the one shell script this project has a clear case for.
+
+**Effort.** M.
+
+**Risk/tradeoff.** The container covers Postgres and the application: Ollama and Stockfish stay native for
+anyone not using the image, and Ollama is deliberately never containerized (no GPU passthrough on Apple
+Silicon). Docker Desktop becomes a prerequisite for the documented path, which ADR 0001 accepted
+explicitly. Stockfish runs 10–30% slower in the VM on macOS and Windows, lengthening the step that already
+dominates.
 
 ---
 
@@ -345,6 +361,50 @@ player's** — P0-8 is unfixed, so a real transcript may contain third-party han
 
 ---
 
+### P3-6 · Read the environment file — **DONE 2026-09-02**
+
+**What it was.** Nothing loaded `.env`. The file was documented as something the *shell* sourced, which
+made the shell chesser's configuration loader and every shell pathology a chesser bug. Five of P3-4's
+troubleshooting entries were one missing step: a file saved with CRLF put a carriage return in the middle
+of `DATABASE_URL`; a port defined below the URL that used it expanded to nothing, which libpq reads as
+5432; `export $(cat .env | xargs)` split the comments into arguments; and sourcing silently overwrote a
+value just exported by hand, which is why a port change so often appeared not to take.
+
+**How.** `chesser/envfile.py`, called from a Typer callback so it runs before any subcommand reads the
+environment. Carriage returns stripped on read, a byte-order mark dropped, comments and quoting parsed
+rather than word-split, and `${VAR}` references resolved against the whole file regardless of line order.
+`CHESSER_ENV_FILE` redirects it; empty switches it off.
+
+**The precedence is deliberate and inverted from the old behavior:** anything already exported wins over
+the file. That is the value the user most recently and most deliberately set, and it is what `docker
+compose` sees too. Because the old surprise ran the other way, being right silently is not enough — the
+loader records the names it declined to set, and `chesser doctor` reports them.
+
+---
+
+### P3-7 · `chesser doctor` — **DONE 2026-09-02**
+
+**What it was.** Every startup check existed; none could be run without doing the expensive thing it
+guards. The first honest verification of a setup was `chesser data analyze`, which needs the network,
+Chess.com, Stockfish, PostgreSQL and an embedding provider at once and runs at about a second per game. So
+every misconfiguration was found at the most expensive possible moment, **one per attempt**, because each
+check correctly aborts at the first failure. With P3-4 at sixteen entries, that is a lot of round trips.
+
+**How.** `chesser/doctor.py` runs eleven checks in order of how fast they answer, never stopping at a
+failure and changing nothing — no migration, no ingestion, no index adoption, no chat request. Existing
+failure messages are reported verbatim rather than re-worded, since they were written against reproduced
+failures and already name their remedies. Output is plain ASCII and passes through `redact_secrets`,
+because it is written to be pasted into an issue.
+
+Two checks are new rather than re-composed. **The port invariant** — P3-4 documented that
+`CHESSER_DB_PORT` and `DATABASE_URL` are configured independently and that "nothing checks that they
+agree"; doctor is the something. And **Stockfish is started, not merely found**: a `PATH` lookup answers
+"is there a file", which a binary for the wrong architecture also passes.
+
+**Consequence for P1-4.** The bug template's environment fields are now one command's output.
+
+---
+
 # P4 — Longer-term maturity
 
 ### P4-1 · Versioning and releases
@@ -393,6 +453,13 @@ attached (`chesser data reembed`) rather than vague advice.
 | 5 | P3-1, P3-2, P3-4 | Biggest onboarding wins, all small |
 | 6 | P1-5, P3-3, P3-5 | Contributor entry points and README polish, once the commands are stable |
 | 7 | P2-6, P2-7, P4-1, P4-2 | Logging, supply-chain scanning, and the release apparatus |
+
+**Amended 2026-09-02.** Phase 5 was executed out of order and incompletely: P3-4 landed, P3-1 landed
+half-way (see its corrected entry), and P3-2 is untouched. Two items that were never on this roadmap were
+done instead — P3-6 and P3-7 above — because a setup audit found the on-ramp's real cost was not the
+number of steps but that **nothing verified any of them until the most expensive one**. What remains for
+onboarding is the application container (P3-1) and the task runner (P3-2), in that order: the wrapper
+script P3-1 needs is the natural home for P3-2's targets.
 
 The audit's original estimate was "two to three focused days" to reach contributor-ready. **Most of that
 has been spent** — sixteen items closed, and the remainder is roughly one focused day, still mostly

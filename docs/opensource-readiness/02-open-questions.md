@@ -57,6 +57,13 @@ Note also that ADR 0001 and ADR 0002 both already *describe* Compose as the docu
 
 **Recommendation:** make Compose the **documented default for the database only**, with native install kept as a clearly-labeled alternative. Be explicit up front that Stockfish is a host install either way, and that Ollama is one unless both providers are hosted. The partial containerization is worth being loud about rather than discovering.
 
+**Answered 2026-09-02, as recommended.** The README's Setup section lists Docker first with "or PostgreSQL
+with pgvector, if you would rather run your own", keeps the native route in a labelled `<details>` block,
+and names Stockfish as a host install in the prerequisites that precede the provider choice. What the
+recommendation did *not* anticipate is that the partial containerization is currently more partial than
+intended — the application image ADR 0001 decided on was never built, so Python and `uv` are host
+prerequisites too. See P3-1 in [`01-roadmap.md`](./01-roadmap.md), corrected the same day.
+
 ---
 
 ## Q6 · Discussions or issues-only?

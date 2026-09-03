@@ -5,11 +5,17 @@
 ```bash
 uv venv
 uv pip install -e ".[dev]"
-. ./.env                       # copy .env.example first
+cp .env.example .env
+chesser doctor                 # every startup check, in one pass
 ```
 
 You will also need PostgreSQL with pgvector, Stockfish on `PATH`, and — for the
 default configuration — Ollama with `nomic-embed-text` and `llama3.2` pulled.
+`chesser doctor` reports which of those are missing rather than failing at the
+first one; the README's [Setup](README.md#setup) section covers installing them.
+
+Nothing needs sourcing: chesser reads `.env` from the working directory itself,
+and anything already exported outranks the file.
 
 ## The checks
 
