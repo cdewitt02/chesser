@@ -12,6 +12,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TextIO
+from urllib.parse import urlsplit
 
 from chesser.llm.base import Embedder, Preflighter
 from chesser.llm.errors import ErrorKind, LLMError
@@ -231,6 +232,78 @@ def redact_secrets(text: str) -> str:
     """
     text = _URL_CREDENTIALS.sub(r"\g<scheme>\g<user>:***@", text)
     return _API_KEY.sub("sk-***", text)
+
+
+# ---------- DATABASE_URL validation ----------
+#
+# Two failures that libpq reports as something else entirely, caught before a
+# connection is attempted. They live here rather than in the CLI because
+# `chesser doctor` has to ask the same questions without exiting on the first
+# answer, and one definition is what keeps the two from drifting.
+#
+# Both messages changed shape when chesser started reading the env file itself
+# (`chesser.envfile`): the loader strips carriage returns and resolves the
+# file's own references in any order, so neither failure can originate in the
+# file any more. What is left is the shell, and that is what the remedies now
+# name.
+
+
+def control_character_problem(url: str) -> str:
+    r"""A carriage return in the DSN, which is invisible and never valid.
+
+    libpq answers a CR in the port field by reporting a host it cannot resolve,
+    which is true and entirely unhelpful: the host is fine, the port is
+    "5433\r". Nothing legitimate puts a control character in a connection
+    string.
+    """
+    found = next((c for c in url if ord(c) < 0x20), "")
+    if not found:
+        return ""
+    return (
+        f"DATABASE_URL contains a control character ({found!r}), so it is not the "
+        "URL it looks like.\n"
+        "  chesser reads the env file itself and strips carriage returns, so this "
+        "one came from the shell —\n"
+        "  a file with Windows (CRLF) line endings that was sourced, whose value "
+        "then outranks the file's.\n"
+        "  Drop the shell's copy and let chesser read the file:\n"
+        "    unset DATABASE_URL\n"
+        "  or convert the file once:\n"
+        r"    sed -i 's/\r$//' .env"
+    )
+
+
+def unexpanded_port_problem(url: str) -> str:
+    """A port that expanded to nothing, which libpq quietly reads as 5432.
+
+    On the machine that needed a different port in the first place, 5432 is
+    usually somebody else's PostgreSQL — so the failure talks about credentials
+    and never mentions the port.
+    """
+    if "${" in url or "$(" in url:
+        return (
+            "DATABASE_URL still contains an unexpanded variable, so nothing "
+            "substituted it.\n"
+            "  Single quotes around the value prevent substitution, in the env file "
+            "as well as in the shell; use double quotes."
+        )
+    if urlsplit(url).netloc.endswith(":"):
+        return (
+            "DATABASE_URL has an empty port, so PostgreSQL would silently be "
+            "asked for 5432.\n"
+            "  CHESSER_DB_PORT expanded to nothing. chesser resolves the env file's "
+            "own references whatever\n"
+            "  order they are written in, so this came from the shell: the URL was "
+            "built before the port was set.\n"
+            "  Drop the shell's copy and let chesser build it from the file:\n"
+            "    unset DATABASE_URL"
+        )
+    return ""
+
+
+def database_url_problem(url: str) -> str:
+    """Everything wrong with a DSN that is knowable without connecting, or ""."""
+    return control_character_problem(url) or unexpanded_port_problem(url)
 
 
 # ---------- startup checks ----------

@@ -95,6 +95,14 @@ class Engine:
     def close(self) -> None:
         self._engine.quit()
 
+    def id_name(self) -> str:
+        """What the engine calls itself over UCI — "Stockfish 16.1", say.
+
+        `chesser doctor` reports it, and the bug template asks for it; both are
+        otherwise asking the user to find a version string by hand.
+        """
+        return str(self._engine.id.get("name", ""))
+
     def __enter__(self) -> Engine:
         return self
 
@@ -140,6 +148,19 @@ class Engine:
             pv=[move.uci() for move in pv],
             depth=int(info.get("depth", 0) or 0),
         )
+
+
+def probe() -> str:
+    """Start the engine, ask what it is, and shut it down.
+
+    `require_stockfish` answers "is there a file at that path". This answers
+    "does it run", which is the question a setup check is really asking: a
+    binary built for another architecture, or a wrapper script that never speaks
+    UCI, passes the first and fails the second — and would otherwise surface in
+    an analysis worker, after a month of games had already been fetched.
+    """
+    with start_engine() as running:
+        return running.id_name()
 
 
 @contextmanager

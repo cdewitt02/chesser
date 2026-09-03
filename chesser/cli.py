@@ -12,11 +12,10 @@ import os
 import sys
 import time
 from typing import Annotated
-from urllib.parse import urlsplit
 
 import typer
 
-from chesser import config, engine
+from chesser import config, engine, envfile
 from chesser.api import ChessComError, get_data
 from chesser.chat.service import Config as ChatConfig
 from chesser.chat.service import Service
@@ -24,13 +23,37 @@ from chesser.db import DB, DBConnectionError, IndexMeta
 from chesser.llm.base import Embedder, embed_one
 from chesser.models import Game, YearMonth
 
-app = typer.Typer(
-    add_completion=False,
-    no_args_is_help=True,
-    help="A chess coach that answers questions about your own games.",
-)
+_HELP = "A chess coach that answers questions about your own games."
+
+app = typer.Typer(add_completion=False, no_args_is_help=True, help=_HELP)
 data_app = typer.Typer(no_args_is_help=True, help="Ingest and maintain the corpus.")
 app.add_typer(data_app, name="data")
+
+# What `envfile.load` did, kept so `doctor` can report it in context rather than
+# loading a second time and describing a different run than the one that
+# configured the process.
+_ENV_LOAD: envfile.Loaded | None = None
+
+
+# help= is passed explicitly because registering a callback makes Typer take the
+# app's help text from it, and the text should not depend on that.
+@app.callback(help=_HELP)
+def _load_environment(ctx: typer.Context) -> None:
+    """Read the environment file before any subcommand reads the environment.
+
+    Nothing did this before, which made the *shell* chesser's configuration
+    loader — see `chesser.envfile` for what that cost. Values already exported
+    are left alone, so anything set by hand still wins.
+    """
+    global _ENV_LOAD
+
+    _ENV_LOAD = envfile.load()
+    if ctx.invoked_subcommand == "doctor":
+        # doctor reports these itself, alongside the file they came from.
+        return
+    for problem in _ENV_LOAD.problems:
+        print(f"Warning: {_ENV_LOAD.path}: {problem}", file=sys.stderr)
+
 
 # Number of games retrieved for context, and the number of most-relevant games
 # shown in the prompt. Both feed the assembled prompt, so changing either
@@ -49,61 +72,32 @@ def _fail(message: str) -> None:
 def _database_url() -> str:
     url = os.environ.get("DATABASE_URL", "")
     if not url:
-        _fail("DATABASE_URL environment variable is required")
+        _fail(
+            "DATABASE_URL environment variable is required.\n"
+            f"  chesser reads {envfile.DEFAULT_FILENAME} from the working directory — copy "
+            f"{envfile.DEFAULT_FILENAME}.example to it — or export the variable.\n"
+            "  `chesser doctor` says which file was read and what it set."
+        )
     _reject_control_characters(url)
     _reject_unexpanded_port(url)
     return url
 
 
-def _reject_unexpanded_port(url: str) -> None:
-    """Catch a port that expanded to nothing, which libpq quietly reads as 5432.
+# Both checks live in `chesser.config`, because `chesser doctor` asks the same
+# questions without exiting on the first answer. These wrappers are what turns a
+# message into the exit every other startup failure uses.
 
-    The example env file builds DATABASE_URL from CHESSER_DB_PORT, so a file
-    that sets the port *after* the URL — which is what appending that line to an
-    existing file does — leaves "localhost:/chesser". libpq then connects to
-    5432, and on the machine that needed a different port in the first place
-    that is usually somebody else's PostgreSQL, so the failure talks about
-    credentials and never mentions the port.
-    """
-    netloc = urlsplit(url).netloc
-    if "${" in url or "$(" in url:
-        _fail(
-            "DATABASE_URL still contains an unexpanded variable, so the shell "
-            "never substituted it.\n"
-            "  Single quotes around the value prevent substitution; use double "
-            "quotes."
-        )
-    if netloc.endswith(":"):
-        _fail(
-            "DATABASE_URL has an empty port, so PostgreSQL would silently be "
-            "asked for 5432.\n"
-            "  CHESSER_DB_PORT expanded to nothing, which means it is set below "
-            "DATABASE_URL in the env file, or not set at all.\n"
-            "  Define it above the line that uses it."
-        )
+
+def _reject_unexpanded_port(url: str) -> None:
+    problem = config.unexpanded_port_problem(url)
+    if problem:
+        _fail(problem)
 
 
 def _reject_control_characters(url: str) -> None:
-    r"""Catch a carriage return in the DSN, which is invisible and never valid.
-
-    An env file saved with Windows line endings puts a CR at the end of every
-    value when the file is sourced, and — because DATABASE_URL is built from
-    CHESSER_DB_PORT — in the middle of the URL rather than at the end. libpq
-    then reports a host it cannot resolve, which is true and entirely
-    unhelpful: the host is fine, the port field is "5433\r". Nothing
-    legitimate puts a control character in a connection string.
-    """
-    found = next((c for c in url if ord(c) < 0x20), "")
-    if not found:
-        return
-    _fail(
-        f"DATABASE_URL contains a control character ({found!r}), so it is not the "
-        "URL it looks like.\n"
-        "  An env file saved with Windows (CRLF) line endings does this to every "
-        "value it sets.\n"
-        "  Convert it, then source it again:\n"
-        r"    sed -i 's/\r$//' .env"
-    )
+    problem = config.control_character_problem(url)
+    if problem:
+        _fail(problem)
 
 
 def _open_db(url: str = "") -> DB:
@@ -144,6 +138,25 @@ def _new_embedder(database: DB, adopt: bool) -> Embedder:
     config.preflight(sys.stderr, embedder)
     config.check_index(database, embedder, adopt, sys.stderr)
     return embedder
+
+
+# ---------- chesser doctor ----------
+
+
+@app.command("doctor")
+def doctor() -> None:
+    """Check the setup and report everything that is wrong, without running a job.
+
+    Every check here already ran somewhere; what it did not have was a way to
+    run without the expensive work it guards. The first honest verification of a
+    setup used to be `chesser data analyze`, which needs the network, Chess.com,
+    Stockfish, PostgreSQL and an embedding provider at once — so every mistake
+    was found at the worst possible moment, one per attempt.
+    """
+    from chesser import doctor as checks
+
+    report = checks.run(sys.stdout, loaded=_ENV_LOAD)
+    raise typer.Exit(report.exit_code)
 
 
 # ---------- chesser data ----------
