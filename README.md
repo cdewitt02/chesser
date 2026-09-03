@@ -70,7 +70,11 @@ Already running PostgreSQL on port 5432? Pick another host port:
 CHESSER_DB_PORT=5433 docker compose up -d
 ```
 
-and use it in `DATABASE_URL` at step 4.
+The port then has to match in `DATABASE_URL` at step 4 as well — the container
+and chesser are configured independently, and nothing checks that they agree.
+Setting `CHESSER_DB_PORT` in `.env` instead of on the command line keeps them in
+step: `docker compose` reads that file, and `.env.example` builds `DATABASE_URL`
+from the same variable.
 
 <details>
 <summary>Using your own PostgreSQL instead</summary>
@@ -337,6 +341,45 @@ chesser data reembed
 That reads stored summary text and rebuilds vectors — no Stockfish, no
 re-analysis, so it is fast.
 
+**`Error: could not connect to the database after 30s`**
+The line under it is what PostgreSQL actually said, and it separates the two
+cases:
+
+- *Connection refused* — nothing is listening. Check `docker compose ps`; a
+  container that exited leaves the port empty.
+- *password authentication failed* — something answered, but it is not the
+  chesser container. Usually a native PostgreSQL already holds 5432, which also
+  stopped `docker compose up` from binding it. Publish another port and point
+  `DATABASE_URL` at it:
+
+  ```bash
+  CHESSER_DB_PORT=5433 docker compose up -d
+  export DATABASE_URL="postgres://chesser:chesser@localhost:5433/chesser"
+  ```
+
+Startup waits the full 30 seconds before giving up, because `docker compose up
+-d` returns before PostgreSQL accepts connections — a first run that races a
+cold container retries rather than failing.
+
+**`FATAL:  database "chesser" does not exist`**
+The container is running and the credentials work — this is not a connection
+problem. The PostgreSQL image runs `POSTGRES_DB` *and* `docker/init-pgvector.sql`
+only on a first start with an empty data directory. A first `docker compose up`
+that was interrupted leaves the volume non-empty but incomplete, and from then
+on every start skips initialization: restarting, re-running `up`, and changing
+the port all leave it exactly as broken.
+
+Discard the volume so it initializes again. **This deletes any games you have
+already analyzed** — re-run `chesser data analyze` afterwards:
+
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+`down -v` is what distinguishes this from `down`, which keeps the volume and so
+changes nothing.
+
 **`failed to bind host port 0.0.0.0:5432: address already in use`**
 Something else — usually a native PostgreSQL — already holds the port.
 
@@ -350,6 +393,15 @@ Nothing loads `.env` automatically. Source it, or export the variable:
 
 ```bash
 . ./.env
+```
+
+Note that sourcing it *overwrites* a `DATABASE_URL` you exported by hand, which
+is the usual reason a port change appears not to take. Check what is actually in
+effect rather than what you last typed:
+
+```bash
+echo "$DATABASE_URL"
+docker compose ps    # PORTS names the published one
 ```
 
 **Ollama connection refused, or a model 404**

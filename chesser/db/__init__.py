@@ -22,7 +22,7 @@ import psycopg
 from pgvector import Vector
 from pgvector.psycopg import register_vector
 from psycopg.rows import tuple_row
-from psycopg_pool import ConnectionPool
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 from chesser.config import redact_secrets
 from chesser.db.records import (
@@ -129,8 +129,25 @@ def _move_from_row(row: Sequence[Any]) -> MoveRecord:
     )
 
 
+# Long enough to cover the gap between `docker compose up -d` returning and
+# Postgres accepting connections on a cold container.
+_CONNECT_TIMEOUT = 30.0
+
+
+class DBConnectionError(Exception):
+    """The pool never came up. Carries the reason libpq actually gave."""
+
+
+# Written by the pool's background threads through _RedactingLogFilter, read by
+# _open_pool when the wait times out. A module-level holder rather than an
+# instance attribute because the filter is installed once, on the shared
+# "psycopg.pool" logger, before any DB exists.
+_last_connect_error = ""
+
+
 class _RedactingLogFilter(logging.Filter):
-    """Blank credentials in psycopg_pool's own log records.
+    """Blank credentials in psycopg_pool's own log records, and keep the last
+    connection failure so it can be reported once instead of fifteen times.
 
     The pool logs connection failures itself, on the "psycopg.pool" logger,
     without passing through any of chesser's error paths. A malformed
@@ -138,12 +155,26 @@ class _RedactingLogFilter(logging.Filter):
     "postgres://user:password@host/db"` — which reaches stderr with the password
     intact. Redacting at chesser's own output sites does not cover this one,
     because chesser never sees the string.
+
+    Those same records are also the only place the *reason* for a failed
+    connection appears: the pool retries until the wait times out and then
+    raises PoolTimeout, which knows nothing about refused connections or bad
+    passwords. So the retry chatter is captured and swallowed here, and
+    _open_pool raises it back as one actionable error.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
+        global _last_connect_error
+
         # Render args in first: the DSN arrives as an argument, not in msg.
         record.msg = redact_secrets(record.getMessage())
         record.args = ()
+        if record.msg.startswith("error connecting"):
+            _last_connect_error = record.msg
+            # Suppressed, not just redacted: one attempt per retry means this
+            # line otherwise scrolls the eventual error off the screen. Any
+            # other pool record still reaches stderr.
+            return False
         return True
 
 
@@ -153,14 +184,69 @@ def _install_pool_log_redaction() -> None:
         logger.addFilter(_RedactingLogFilter())
 
 
+def _connect_failure(seconds: float) -> DBConnectionError:
+    """Turn a PoolTimeout into something a first-time setup can act on."""
+    reason = _last_connect_error
+    # "error connecting in 'pool-1': connection failed: ..." — the pool's own
+    # framing is noise once this is the only line printed.
+    _, _, detail = reason.partition(": ")
+    detail = (detail or reason).strip().removeprefix("connection failed:").strip()
+    lines = [f"could not connect to the database after {seconds:.0f}s"]
+    # libpq's message runs to several lines, and repeats itself once per address
+    # it tried — identical text for IPv4 and IPv6 on a localhost DSN.
+    for line in detail.splitlines():
+        line = f"  {line.strip()}"
+        if line.strip() and line not in lines:
+            lines.append(line)
+    lines += [f"  {line}" for line in _hint(detail)]
+    return DBConnectionError("\n".join(lines))
+
+
+def _hint(detail: str) -> list[str]:
+    """The remedy, chosen by what PostgreSQL actually objected to.
+
+    These three have nothing to do with each other, and the wrong hint costs
+    more than none: "check the port" reads as a dead end to someone whose port
+    is already right.
+    """
+    if "does not exist" in detail and "database" in detail:
+        # The server is up and the credentials work, so this is not a
+        # connection problem at all. The postgres image runs POSTGRES_DB and
+        # the pgvector script only when the data directory is empty, so a
+        # volume left half-initialized — an interrupted first `docker compose
+        # up`, typically — is never repaired by starting the container again.
+        return [
+            "The container is running and the credentials work, so this is a",
+            "half-initialized data volume: PostgreSQL only creates POSTGRES_DB on a",
+            "first start with an empty one, and no restart repairs it. Discard the",
+            "volume and let it initialize again — this deletes any analyzed games:",
+            "  docker compose down -v && docker compose up -d",
+        ]
+    if "authentication failed" in detail or "role" in detail:
+        return [
+            "Something answered, but it is not the chesser container — usually a",
+            "PostgreSQL already on that port, which also stopped the container from",
+            "binding it. Publish another port with CHESSER_DB_PORT and match it in",
+            "DATABASE_URL; `docker compose ps` shows the published one.",
+        ]
+    return [
+        "Check `docker compose ps` — nothing is listening on that port. The port it",
+        "publishes is CHESSER_DB_PORT (default 5432), and DATABASE_URL has to name",
+        "the same one.",
+    ]
+
+
 class DB:
     """A connection pool plus the queries chesser runs against it."""
 
     def __init__(self, conn_string: str = "") -> None:
+        global _last_connect_error
+
         if not conn_string:
             conn_string = os.environ.get("DATABASE_URL", "")
         self._conn_string = conn_string
         _install_pool_log_redaction()
+        _last_connect_error = ""
         self._pool = self._open_pool()
 
     def _open_pool(self) -> ConnectionPool[psycopg.Connection[Any]]:
@@ -191,8 +277,14 @@ class DB:
             kwargs={"row_factory": tuple_row},
         )
         # Verify the connection now rather than at the first query, so a bad
-        # DATABASE_URL is a startup error.
-        pool.wait(timeout=30)
+        # DATABASE_URL is a startup error. The wait is generous because
+        # `docker compose up -d` returns before Postgres accepts connections,
+        # and a first run that races the container should retry, not fail.
+        try:
+            pool.wait(timeout=_CONNECT_TIMEOUT)
+        except PoolTimeout as err:
+            pool.close()
+            raise _connect_failure(_CONNECT_TIMEOUT) from err
         return pool
 
     def close(self) -> None:

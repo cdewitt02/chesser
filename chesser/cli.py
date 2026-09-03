@@ -19,7 +19,7 @@ from chesser import config
 from chesser.api import ChessComError, get_data
 from chesser.chat.service import Config as ChatConfig
 from chesser.chat.service import Service
-from chesser.db import DB, IndexMeta
+from chesser.db import DB, DBConnectionError, IndexMeta
 from chesser.llm.base import Embedder, embed_one
 from chesser.models import Game, YearMonth
 
@@ -50,6 +50,20 @@ def _database_url() -> str:
     if not url:
         _fail("DATABASE_URL environment variable is required")
     return url
+
+
+def _open_db(url: str = "") -> DB:
+    """Open the pool, reporting a failure the way every other startup check is.
+
+    An unreachable database is the most likely thing to go wrong on a first
+    setup — the container is still starting, or the published port is not the
+    one in DATABASE_URL — and a psycopg traceback is the wrong shape for it.
+    """
+    try:
+        return DB(url or _database_url())
+    except DBConnectionError as err:
+        _fail(str(err))
+        raise
 
 
 def _num_workers() -> int:
@@ -105,7 +119,7 @@ def analyze(
         return
     print(f"Fetched {len(games)} games from Chess.com")
 
-    with DB(_database_url()) as database:
+    with _open_db() as database:
         database.migrate()
 
         to_analyze: list[Game] = [g for g in games if not database.game_exists(g.uuid)]
@@ -142,7 +156,7 @@ def analyze(
 @data_app.command("refresh-stats")
 def refresh_stats(username: Annotated[str, typer.Argument(help="Chess.com username")]) -> None:
     """Recompute the aggregate stats for a player."""
-    with DB(_database_url()) as database:
+    with _open_db() as database:
         database.migrate()
 
         print(f"Refreshing stats for {username}...")
@@ -191,7 +205,7 @@ def reembed() -> None:
     switching embedding models is a bounded re-embed pass rather than a
     re-analysis.
     """
-    with DB(_database_url()) as database:
+    with _open_db() as database:
         database.migrate()
 
         cfg = config.resolve()
@@ -252,7 +266,7 @@ def chat(
         _fail(str(err))
         return
 
-    with DB(database_url) as database:
+    with _open_db(database_url) as database:
         try:
             model = cfg.new_chat_model()
             embedder = cfg.new_embedder()

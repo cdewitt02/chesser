@@ -323,3 +323,115 @@ def test_the_pool_logger_filter_redacts_a_quoted_dsn() -> None:
 
     assert "hunter2" not in record.getMessage()
     assert "chesser:***@" in record.getMessage()
+
+
+def test_the_pool_logger_filter_swallows_retry_chatter_and_keeps_the_reason() -> None:
+    """The pool retries once per second until the wait times out, so letting
+    every attempt through scrolls the eventual error off the screen. The last
+    one is kept so _connect_failure can report it instead of a bare PoolTimeout.
+    """
+    import logging
+
+    from chesser.db import _install_pool_log_redaction
+
+    _install_pool_log_redaction()
+    logger = logging.getLogger("psycopg.pool")
+    [pool_filter] = [f for f in logger.filters if isinstance(f, logging.Filter)]
+
+    record = logger.makeRecord(
+        "psycopg.pool",
+        logging.WARNING,
+        __file__,
+        0,
+        "error connecting in %r: connection failed: connection to server at "
+        '"127.0.0.1", port 5499 failed: Connection refused',
+        ("pool-1",),
+        None,
+    )
+    assert pool_filter.filter(record) is False
+
+    import chesser.db
+
+    assert "Connection refused" in chesser.db._last_connect_error
+
+
+def test_a_pool_timeout_is_reported_as_the_reason_libpq_gave() -> None:
+    """A PoolTimeout says only that the pool did not fill. The refused
+    connection, the wrong port, and the wrong password all look identical
+    through it, which is the failure a first-time setup actually hits.
+    """
+    import chesser.db
+    from chesser.db import _connect_failure
+
+    chesser.db._last_connect_error = (
+        "error connecting in 'pool-1': connection failed: connection to server "
+        'at "127.0.0.1", port 5499 failed: Connection refused\n'
+        '\tconnection to server at "127.0.0.1", port 5499 failed: Connection refused'
+    )
+    message = str(_connect_failure(30.0))
+
+    assert "could not connect to the database after 30s" in message
+    # The duplicate libpq line — one per address tried — appears once.
+    assert message.count("Connection refused") == 1
+    assert "CHESSER_DB_PORT" in message
+
+
+def test_a_connection_failure_does_not_leak_the_password() -> None:
+    """The DSN reaches this path through psycopg_pool's own log record, which
+    never passes through chesser's output sites."""
+    import logging
+
+    import chesser.db
+    from chesser.db import _connect_failure, _install_pool_log_redaction
+
+    _install_pool_log_redaction()
+    logger = logging.getLogger("psycopg.pool")
+    record = logger.makeRecord(
+        "psycopg.pool",
+        logging.WARNING,
+        __file__,
+        0,
+        'error connecting in %r: missing "=" after "%s" in connection info string',
+        ("pool-1", "notascheme://chesser:hunter2@localhost/chesser"),
+        None,
+    )
+    for log_filter in logger.filters:
+        if isinstance(log_filter, logging.Filter):
+            log_filter.filter(record)
+
+    message = str(_connect_failure(30.0))
+    assert "hunter2" not in message
+    assert "chesser:***@" in message
+    assert chesser.db._last_connect_error  # captured, not merely redacted
+
+
+def test_a_missing_database_is_not_reported_as_a_port_problem() -> None:
+    """The container is up and the credentials work, so "check the port" is a
+    dead end. The postgres image runs POSTGRES_DB only on a first start with an
+    empty data directory, so an interrupted first `up` leaves a volume that no
+    restart repairs.
+    """
+    from chesser.db import _hint
+
+    hint = " ".join(_hint('FATAL:  database "chesser" does not exist'))
+
+    assert "down -v" in hint
+    assert "CHESSER_DB_PORT" not in hint
+
+
+def test_a_rejected_login_points_at_the_wrong_server_not_the_volume() -> None:
+    from chesser.db import _hint
+
+    hint = " ".join(_hint('FATAL:  password authentication failed for user "chesser"'))
+
+    assert "CHESSER_DB_PORT" in hint
+    assert "down -v" not in hint
+
+
+def test_a_refused_connection_points_at_the_port() -> None:
+    from chesser.db import _hint
+
+    hint = " ".join(_hint("Connection refused"))
+
+    assert "CHESSER_DB_PORT" in hint
+    assert "down -v" not in hint
