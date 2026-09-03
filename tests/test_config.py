@@ -435,3 +435,39 @@ def test_a_refused_connection_points_at_the_port() -> None:
 
     assert "CHESSER_DB_PORT" in hint
     assert "down -v" not in hint
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # The CR lands mid-URL, because the port is interpolated into it.
+        "postgres://chesser:chesser@localhost:5433\r/chesser?sslmode=disable",
+        "postgres://chesser:chesser@localhost:5433/chesser\r",
+        "postgres://chesser:chesser@localhost:5433/chesser\n",
+        "postgres://chesser:chesser@localhost:5433/chesser\t",
+    ],
+)
+def test_a_control_character_in_the_dsn_is_rejected_before_connecting(
+    url: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Sourcing a file saved with Windows line endings puts a CR in every value.
+    libpq answers a CR in the port field with "failed to resolve host", which is
+    true and useless — the host is fine and the character is invisible.
+    """
+    import typer
+
+    from chesser.cli import _reject_control_characters
+
+    with pytest.raises(typer.Exit):
+        _reject_control_characters(url)
+
+    err = capsys.readouterr().err
+    assert "control character" in err
+    assert "CRLF" in err
+
+
+def test_an_ordinary_dsn_is_left_alone() -> None:
+    from chesser.cli import _reject_control_characters
+
+    # Must return rather than raise; anything else would break every run.
+    _reject_control_characters("postgres://u:p@localhost:5432/chesser")

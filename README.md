@@ -361,6 +361,47 @@ Startup waits the full 30 seconds before giving up, because `docker compose up
 -d` returns before PostgreSQL accepts connections — a first run that races a
 cold container retries rather than failing.
 
+**`Error: DATABASE_URL contains a control character`**, or **`invalid hostPort`**
+with nothing visible after the number
+The env file has Windows (CRLF) line endings. Sourcing it appends a carriage
+return to *every* value — including your API keys — and, because `DATABASE_URL`
+is built from `CHESSER_DB_PORT`, the CR lands in the middle of the connection
+string rather than at the end. Convert the file once:
+
+```bash
+sed -i 's/\r$//' .env      # or: dos2unix .env
+```
+
+`docker compose` reads that same file without complaining, because it trims
+whitespace from values and a shell does not. Compose can therefore be perfectly
+happy while every sourced variable is subtly wrong, so check the shell rather
+than the file:
+
+```bash
+printf '%q\n' "$CHESSER_DB_PORT"    # a bare number, or $'5433\r'?
+```
+
+If the file keeps reverting to CRLF — an editor on another machine, usually —
+source it through a filter instead of repeatedly fixing it:
+
+```bash
+. <(tr -d '\r' < .env)
+```
+
+**`invalid hostPort: 5433`** from `docker compose config` or `up`
+`CHESSER_DB_PORT` has a stray character — a trailing space, or a zero-width
+space picked up by copy-paste. Compose strips whitespace from values in the env
+file but *not* from the shell environment, so an exported variable is the usual
+culprit and the error prints nothing visible after the number. Show it exactly:
+
+```bash
+printf '%q\n' "$CHESSER_DB_PORT"
+```
+
+Anything other than a bare number is the problem. `unset CHESSER_DB_PORT` and
+set it again, or set it in the env file instead, where the whitespace is
+tolerated.
+
 **`FATAL:  database "chesser" does not exist`**
 The container is running and the credentials work — this is not a connection
 problem. The PostgreSQL image runs `POSTGRES_DB` *and* `docker/init-pgvector.sql`

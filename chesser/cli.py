@@ -49,7 +49,31 @@ def _database_url() -> str:
     url = os.environ.get("DATABASE_URL", "")
     if not url:
         _fail("DATABASE_URL environment variable is required")
+    _reject_control_characters(url)
     return url
+
+
+def _reject_control_characters(url: str) -> None:
+    r"""Catch a carriage return in the DSN, which is invisible and never valid.
+
+    An env file saved with Windows line endings puts a CR at the end of every
+    value when the file is sourced, and — because DATABASE_URL is built from
+    CHESSER_DB_PORT — in the middle of the URL rather than at the end. libpq
+    then reports a host it cannot resolve, which is true and entirely
+    unhelpful: the host is fine, the port field is "5433\r". Nothing
+    legitimate puts a control character in a connection string.
+    """
+    found = next((c for c in url if ord(c) < 0x20), "")
+    if not found:
+        return
+    _fail(
+        f"DATABASE_URL contains a control character ({found!r}), so it is not the "
+        "URL it looks like.\n"
+        "  An env file saved with Windows (CRLF) line endings does this to every "
+        "value it sets.\n"
+        "  Convert it, then source it again:\n"
+        r"    sed -i 's/\r$//' .env"
+    )
 
 
 def _open_db(url: str = "") -> DB:
