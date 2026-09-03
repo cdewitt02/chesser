@@ -12,6 +12,8 @@ grid.
 from __future__ import annotations
 
 import io
+import os
+import shutil
 from collections.abc import Iterator
 from contextlib import contextmanager
 from types import TracebackType
@@ -32,6 +34,49 @@ class EngineError(RuntimeError):
     """Stockfish could not be started, or died mid-analysis."""
 
 
+def resolve_command() -> str:
+    """The Stockfish command: `STOCKFISH_PATH` if set, else a PATH lookup.
+
+    STOCKFISH_PATH exists because editing PATH is per-shell, easy to get wrong,
+    and not where anything else about this tool is configured — the env file
+    already holds every other setting. It also covers the common case of a
+    binary downloaded from the Stockfish releases and left wherever it landed.
+    """
+    return os.environ.get("STOCKFISH_PATH", "").strip() or "stockfish"
+
+
+def find_stockfish() -> str | None:
+    """The executable Stockfish would actually run, or None if there is none."""
+    command = resolve_command()
+    if os.sep in command:
+        usable = os.path.isfile(command) and os.access(command, os.X_OK)
+        return command if usable else None
+    return shutil.which(command)
+
+
+def require_stockfish() -> None:
+    """Fail before any expensive work if the engine cannot be found.
+
+    Analysis fetches a month of games over the network and opens the database
+    before a worker ever starts an engine, so without this the first sign of a
+    missing Stockfish arrives well into the run.
+    """
+    if find_stockfish() is not None:
+        return
+    command = resolve_command()
+    hint = (
+        "  Install it — `sudo apt install stockfish`, or `brew install stockfish` —\n"
+        "  or point STOCKFISH_PATH at the binary:\n"
+        "    export STOCKFISH_PATH=/usr/games/stockfish\n"
+        "  Debian and Ubuntu install it to /usr/games, which is on the PATH of a\n"
+        "  login shell but often not otherwise, so it can be installed and still\n"
+        "  not be found."
+    )
+    if os.sep in command:
+        raise EngineError(f"Stockfish not found at {command!r} (from STOCKFISH_PATH).\n{hint}")
+    raise EngineError(f"Stockfish not found: {command!r} is not on PATH.\n{hint}")
+
+
 class Engine:
     """One Stockfish process.
 
@@ -40,7 +85,8 @@ class Engine:
     workers.
     """
 
-    def __init__(self, command: str = "stockfish") -> None:
+    def __init__(self, command: str = "") -> None:
+        command = command or resolve_command()
         try:
             self._engine = chess.engine.SimpleEngine.popen_uci(command)
         except (OSError, chess.engine.EngineError) as err:
@@ -97,7 +143,7 @@ class Engine:
 
 
 @contextmanager
-def start_engine(command: str = "stockfish") -> Iterator[Engine]:
+def start_engine(command: str = "") -> Iterator[Engine]:
     engine = Engine(command)
     try:
         yield engine

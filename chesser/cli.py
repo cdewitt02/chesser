@@ -12,10 +12,11 @@ import os
 import sys
 import time
 from typing import Annotated
+from urllib.parse import urlsplit
 
 import typer
 
-from chesser import config
+from chesser import config, engine
 from chesser.api import ChessComError, get_data
 from chesser.chat.service import Config as ChatConfig
 from chesser.chat.service import Service
@@ -50,7 +51,36 @@ def _database_url() -> str:
     if not url:
         _fail("DATABASE_URL environment variable is required")
     _reject_control_characters(url)
+    _reject_unexpanded_port(url)
     return url
+
+
+def _reject_unexpanded_port(url: str) -> None:
+    """Catch a port that expanded to nothing, which libpq quietly reads as 5432.
+
+    The example env file builds DATABASE_URL from CHESSER_DB_PORT, so a file
+    that sets the port *after* the URL — which is what appending that line to an
+    existing file does — leaves "localhost:/chesser". libpq then connects to
+    5432, and on the machine that needed a different port in the first place
+    that is usually somebody else's PostgreSQL, so the failure talks about
+    credentials and never mentions the port.
+    """
+    netloc = urlsplit(url).netloc
+    if "${" in url or "$(" in url:
+        _fail(
+            "DATABASE_URL still contains an unexpanded variable, so the shell "
+            "never substituted it.\n"
+            "  Single quotes around the value prevent substitution; use double "
+            "quotes."
+        )
+    if netloc.endswith(":"):
+        _fail(
+            "DATABASE_URL has an empty port, so PostgreSQL would silently be "
+            "asked for 5432.\n"
+            "  CHESSER_DB_PORT expanded to nothing, which means it is set below "
+            "DATABASE_URL in the env file, or not set at all.\n"
+            "  Define it above the line that uses it."
+        )
 
 
 def _reject_control_characters(url: str) -> None:
@@ -131,6 +161,14 @@ def analyze(
     try:
         when = YearMonth(year=year, month=month)
     except ValueError as err:
+        _fail(str(err))
+        return
+
+    # Before the fetch: a month of games and a database connection are wasted
+    # work if there is no engine to analyze them with.
+    try:
+        engine.require_stockfish()
+    except engine.EngineError as err:
         _fail(str(err))
         return
 

@@ -8,6 +8,7 @@ network, and every row is a setup somebody may already have.
 from __future__ import annotations
 
 import io
+from pathlib import Path
 
 import pytest
 
@@ -471,3 +472,101 @@ def test_an_ordinary_dsn_is_left_alone() -> None:
 
     # Must return rather than raise; anything else would break every run.
     _reject_control_characters("postgres://u:p@localhost:5432/chesser")
+
+
+def test_an_empty_port_is_rejected_rather_than_silently_meaning_5432(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """CHESSER_DB_PORT set below DATABASE_URL in the env file expands to
+    nothing, leaving "localhost:/chesser". libpq reads that as 5432 — usually
+    the very server the user moved off — so the failure blames credentials.
+    """
+    import typer
+
+    from chesser.cli import _reject_unexpanded_port
+
+    with pytest.raises(typer.Exit):
+        _reject_unexpanded_port("postgres://c:c@localhost:/chesser?sslmode=disable")
+
+    assert "empty port" in capsys.readouterr().err
+
+
+def test_an_unexpanded_variable_is_rejected(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Single quotes round the value stop the shell substituting it."""
+    import typer
+
+    from chesser.cli import _reject_unexpanded_port
+
+    with pytest.raises(typer.Exit):
+        _reject_unexpanded_port("postgres://c:c@localhost:${CHESSER_DB_PORT}/chesser")
+
+    assert "unexpanded variable" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgres://c:c@localhost:5433/chesser",
+        # No port at all is legitimate and means 5432; only an empty one is not.
+        "postgres://c:c@localhost/chesser",
+    ],
+)
+def test_a_well_formed_dsn_passes_the_port_check(url: str) -> None:
+    from chesser.cli import _reject_unexpanded_port
+
+    _reject_unexpanded_port(url)
+
+
+def test_stockfish_path_overrides_the_path_lookup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Editing PATH is per-shell and easy to get wrong; the env file is where
+    everything else lives."""
+    from chesser.engine import find_stockfish, resolve_command
+
+    binary = tmp_path / "sf"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+
+    monkeypatch.setenv("STOCKFISH_PATH", str(binary))
+    assert resolve_command() == str(binary)
+    assert find_stockfish() == str(binary)
+
+
+def test_an_unset_stockfish_path_falls_back_to_the_plain_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from chesser.engine import resolve_command
+
+    monkeypatch.delenv("STOCKFISH_PATH", raising=False)
+    assert resolve_command() == "stockfish"
+    # Whitespace-only is treated as unset; a blank line in an env file is not a
+    # request to run a binary called "".
+    monkeypatch.setenv("STOCKFISH_PATH", "   ")
+    assert resolve_command() == "stockfish"
+
+
+def test_a_stockfish_path_pointing_nowhere_names_the_variable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """"not on PATH" would be a lie when the user set an explicit path."""
+    from chesser.engine import EngineError, require_stockfish
+
+    monkeypatch.setenv("STOCKFISH_PATH", str(tmp_path / "absent"))
+    with pytest.raises(EngineError) as excinfo:
+        require_stockfish()
+
+    message = str(excinfo.value)
+    assert "STOCKFISH_PATH" in message
+    assert "not on PATH" not in message
+
+
+def test_a_directory_is_not_mistaken_for_the_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from chesser.engine import find_stockfish
+
+    monkeypatch.setenv("STOCKFISH_PATH", str(tmp_path))
+    assert find_stockfish() is None

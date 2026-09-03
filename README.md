@@ -49,7 +49,7 @@ your own database.
 - **Docker** (recommended) or **PostgreSQL** with the
   [pgvector](https://github.com/pgvector/pgvector) extension
 - **Python 3.11+**
-- **Stockfish** on your `PATH`
+- **Stockfish** on your `PATH`, or `STOCKFISH_PATH` pointing at the binary
 - **Ollama** running locally — needed unless you point *both* chat and
   embeddings at a hosted provider (see [Providers](#providers))
 
@@ -258,6 +258,7 @@ index is refused at startup, naming the re-embed path (`chesser data reembed`).
 | `OPENAI_API_KEY` | Required when either provider is `openai` | — |
 | `OLLAMA_URL` | Ollama server URL (honored by both subcommands) | `http://localhost:11434` |
 | `OLLAMA_EMBED_MODEL` | Alias for `EMBED_MODEL` when the embed provider is Ollama | `nomic-embed-text` |
+| `STOCKFISH_PATH` | Path to the Stockfish binary; overrides the `PATH` lookup | `stockfish` on `PATH` |
 | `NUM_WORKERS` | Parallel analysis workers | `4` |
 | `NO_COLOR` | Set to any value to print raw markdown instead of styled output | — |
 | `CHESSER_DEBUG_PROMPT` | Set to any value to dump the assembled prompt to stderr | — |
@@ -388,6 +389,26 @@ source it through a filter instead of repeatedly fixing it:
 . <(tr -d '\r' < .env)
 ```
 
+**`Error: DATABASE_URL has an empty port`**
+`CHESSER_DB_PORT` is set *below* `DATABASE_URL` in the env file, so it had no
+value when the URL was built — which is what appending that line to a file you
+already had does. Move it above the line that uses it. Left alone this is
+particularly slow to diagnose: an empty port means 5432 to libpq, which on the
+machine that needed a different port is usually the very server you moved off,
+so the failure talks about credentials and never mentions the port.
+
+**Loading the env file**
+Source it — the file uses `export`, so that is all it needs:
+
+```bash
+. ./.env
+```
+
+`export $(cat .env | xargs)` is a common shortcut that does not work here: it
+splits the comments into arguments (`export: '#': not a valid identifier`),
+discards quoting, and does *not* strip carriage returns, so it fixes nothing
+that sourcing does not.
+
 **`invalid hostPort: 5433`** from `docker compose config` or `up`
 `CHESSER_DB_PORT` has a stray character — a trailing space, or a zero-width
 space picked up by copy-paste. Compose strips whitespace from values in the env
@@ -450,9 +471,25 @@ Check `ollama list` — the chat model and `nomic-embed-text` both need pulling.
 Startup checks run before the banner, so this surfaces immediately rather than
 after your first question.
 
-**`exec: "stockfish": executable file not found`**
-Stockfish must be on `PATH`. It is only needed for `chesser data analyze`, not
-for chatting, so this appears during ingestion.
+**`Error: Stockfish not found`**
+Either install it so it lands on `PATH`, or say where it is:
+
+```bash
+sudo apt install stockfish      # Debian/Ubuntu
+brew install stockfish          # macOS
+
+export STOCKFISH_PATH=/usr/games/stockfish   # or wherever yours is
+```
+
+`STOCKFISH_PATH` is usually the easier of the two, because it goes in the env
+file alongside everything else rather than in a shell profile.
+
+Note that `apt` installs the binary to **`/usr/games`**, which is on the `PATH`
+of a login shell but frequently not otherwise — so Stockfish can be installed
+and still not be found. `command -v stockfish` tells you which case you are in.
+
+Only `chesser data analyze` needs the engine; chatting does not. The check runs
+before the games are fetched, so a missing engine costs nothing.
 
 **Missing API key for a hosted provider**
 `ANTHROPIC_API_KEY` for `CHAT_PROVIDER=anthropic`, `OPENAI_API_KEY` for either

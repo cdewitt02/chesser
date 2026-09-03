@@ -12,7 +12,6 @@ rather than the stored rows — see the re-analysis test.
 
 from __future__ import annotations
 
-import shutil
 from typing import Any
 
 import pytest
@@ -23,6 +22,7 @@ from chesser.engine import (
     Engine,
     analyze_game,
     classify_move,
+    find_stockfish,
     get_evaluation,
     normalize_eval,
 )
@@ -100,7 +100,8 @@ def test_normalize_eval_flips_on_odd_indices_only() -> None:
 # ---------- the live re-analysis diff ----------
 
 pytest_stockfish = pytest.mark.skipif(
-    shutil.which("stockfish") is None, reason="stockfish is not on PATH"
+    find_stockfish() is None,
+    reason="stockfish is not on PATH and STOCKFISH_PATH is unset",
 )
 
 
